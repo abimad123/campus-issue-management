@@ -1,0 +1,7 @@
+.venv/
+.packages/
+__pycache__/
+*.py[cod]
+staticfiles/
+media/
+.env
