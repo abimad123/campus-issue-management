@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api'
 import type { IssueRecord, Paginated } from '../../types/api'
-import { Badge, Button, EmptyState, ErrorState, Loading } from '../../components/ui'
+import { Badge, EmptyState, ErrorState, Loading } from '../../components/ui'
 
 export default function DashboardPage() {
   const dashboard = useQuery({
@@ -30,7 +30,7 @@ export default function DashboardPage() {
         {dashboard.isPending ? <Loading label="Loading recent issues" />
           : dashboard.isError ? <ErrorState title="Recent issues are unavailable" detail="Try again in a moment." />
             : dashboard.data.all.results.length === 0 ? <EmptyState title="No issues reported yet" detail="When a campus issue is reported, it will appear here." />
-              : <ul className="recent-issues">{dashboard.data.all.results.slice(0, 6).map((issue) => <li key={issue.id}><Link to={`/issues/${issue.id}`}><span><strong>{issue.title}</strong><small>{issue.ticket_number} · {issue.category.name} · {issue.location_name}</small></span><Badge tone={issue.status === 'RESOLVED' || issue.status === 'CLOSED' ? 'green' : 'blue'}>{issue.status.replaceAll('_', ' ')}</Badge></Link></li>)}</ul>}
+              : <ul className="recent-issues">{dashboard.data.all.results.slice(0, 6).map((issue) => <li key={issue.id}><Link to={`/issues/${issue.id}`}><span><strong>{issue.title}</strong><small>{issue.ticket_number} · {issue.category.name} · {issue.location_name}</small></span><Badge tone={issue.status === 'RESOLVED' || issue.status === 'CLOSED' ? 'green' : 'blue'}>{issue.status.replace(/_/g, ' ')}</Badge></Link></li>)}</ul>}
       </section>
       <section className="panel report-shortcut"><div className="eyebrow">CAMPUS SUPPORT</div><h2>Something needs attention?</h2><p>Send a clear report with a location and category. You can follow its status here.</p><Link className="button button--primary" to="/issues/new">Report an issue</Link></section>
     </section>

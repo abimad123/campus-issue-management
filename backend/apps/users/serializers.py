@@ -22,7 +22,12 @@ class LoginSerializer(serializers.Serializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    team_ids = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ("id", "email", "full_name", "phone_number", "role", "date_joined")
+        fields = ("id", "email", "full_name", "phone_number", "role", "date_joined", "team_ids")
         read_only_fields = fields
+
+    def get_team_ids(self, obj):
+        return list(obj.teams.values_list("id", flat=True))

@@ -44,10 +44,12 @@ class IssueListSerializer(serializers.ModelSerializer):
     location_name = serializers.CharField(source="location.display_name", read_only=True)
     asset_name = serializers.CharField(source="asset.name", read_only=True, allow_null=True)
     reporter_name = serializers.SerializerMethodField()
+    assigned_to_name = serializers.CharField(source="assigned_to.full_name", read_only=True, allow_null=True)
+    assigned_team_name = serializers.CharField(source="assigned_team.name", read_only=True, allow_null=True)
 
     class Meta:
         model = Issue
-        fields = ("id", "ticket_number", "title", "category", "location", "location_name", "asset", "asset_name", "reporter", "reporter_name", "priority", "status", "created_at", "updated_at", "resolved_at", "closed_at")
+        fields = ("id", "ticket_number", "title", "category", "location", "location_name", "asset", "asset_name", "reporter", "reporter_name", "assigned_to", "assigned_to_name", "assigned_team", "assigned_team_name", "priority", "status", "created_at", "updated_at", "resolved_at", "closed_at")
 
     def get_reporter_name(self, obj):
         request = self.context.get("request")
