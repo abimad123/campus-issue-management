@@ -26,5 +26,7 @@ class IssuePermission(BasePermission):
                 request.method in SAFE_METHODS or getattr(view, "action", None) == "status"
             )
         if request.user.role == UserRole.SUPERVISOR:
+            if obj.assigned_team_id is None:
+                return request.method in SAFE_METHODS
             return obj.assigned_team_id in request.user.teams.values_list("id", flat=True)
         return False

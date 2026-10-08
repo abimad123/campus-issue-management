@@ -7,13 +7,20 @@ import AssetsPage from './features/assets/AssetsPage'
 import { RoutingRulesPage, SlaPoliciesPage } from './features/admin/WorkflowConfigPages'
 import DashboardPage from './features/issues/DashboardPage'
 import { IssueCreatePage, IssueDetailPage, IssueListPage } from './features/issues/IssuePages'
+import { WorkOrderDetailPage, WorkOrderListPage } from './features/workorders/WorkOrderPages'
 import LoginPage from './features/auth/LoginPage'
+import NotificationsPage from './features/notifications/NotificationsPage'
+import { NetworkDeviceDetailPage, NetworkDevicesPage, NetworkMeasurementEvaluationPage, NetworkMeasurementsPage, NetworksPage } from './features/network/NetworkPages'
+import NetworkQualityPage from './features/network/NetworkQualityPage'
 import { ApiError, apiRequest } from './lib/api'
 import type { AuthUser } from './types/api'
 
 type NavigationItem = { label: string; path: string; icon: string; end?: boolean }
 const adminRoles = new Set<AuthUser['role']>(['CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
 const assetRoles = new Set<AuthUser['role']>(['FACILITY_MANAGER', 'IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
+const workOrderRoles = new Set<AuthUser['role']>(['TECHNICIAN', 'SUPERVISOR', 'FACILITY_MANAGER', 'IT_MANAGER', 'DEPARTMENT_HEAD', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
+const networkRoles = new Set<AuthUser['role']>(['TECHNICIAN', 'SUPERVISOR', 'IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
+const networkManagementRoles = new Set<AuthUser['role']>(['IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
 const adminUrl = `${new URL(import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api').origin}/admin/`
 
 function navigationFor(user: AuthUser): NavigationItem[] {
@@ -23,11 +30,19 @@ function navigationFor(user: AuthUser): NavigationItem[] {
     { label: 'Report an issue', path: '/issues/new', icon: '＋' },
   ]
   if (assetRoles.has(user.role)) items.push({ label: 'Asset register', path: '/assets', icon: '◇' })
+  if (workOrderRoles.has(user.role)) items.push({ label: 'Work orders', path: '/work-orders', icon: '▤', end: true })
+  if (networkRoles.has(user.role)) {
+    items.push({ label: 'Network devices', path: '/network/devices', icon: '⌁' })
+    items.push({ label: 'Networks', path: '/network/networks', icon: '◌' })
+    items.push({ label: 'Measurements', path: '/network/measurements', icon: '↕' })
+    items.push({ label: 'Network quality', path: '/network-quality', icon: '◧' })
+  }
   if (adminRoles.has(user.role)) {
     items.push({ label: 'Administration', path: '/admin', icon: '⚙' })
     items.push({ label: 'Routing rules', path: '/admin/routing-rules', icon: '↗' })
     items.push({ label: 'SLA policies', path: '/admin/sla-policies', icon: '◷' })
   }
+  items.push({ label: 'Notifications', path: '/notifications', icon: '◉' })
   items.push({ label: 'Profile', path: '/profile', icon: '○' })
   return items
 }
@@ -70,22 +85,36 @@ function AuthenticatedApp({ user }: { user: AuthUser }) {
   const navigation = navigationFor(user)
   const initials = user.full_name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
 
+  useEffect(() => {
+    if (!menuOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false)
+        document.getElementById('navigation-toggle')?.focus()
+      }
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [menuOpen])
+
   return <div className="app-shell">
     {menuOpen && <button className="scrim" aria-label="Close navigation" onClick={() => setMenuOpen(false)} />}
-    <aside className={`sidebar ${menuOpen ? 'sidebar--open' : ''}`}>
+    <aside id="main-sidebar" className={`sidebar ${menuOpen ? 'sidebar--open' : ''}`}>
       <Link to="/dashboard" className="brand"><div className="brand-mark" aria-hidden="true">C</div><div><strong>Campus Operations</strong><span>Service platform</span></div></Link>
       <nav aria-label="Main navigation" className="nav-list">
         <div className="nav-group"><div className="nav-label">CAMPUS OPERATIONS</div>{navigation.filter((item) => ['/dashboard', '/issues', '/issues/new'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>
         {navigation.some((item) => item.path === '/assets') && <div className="nav-group"><div className="nav-label">CAMPUS RESOURCES</div>{navigation.filter((item) => item.path === '/assets').map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>}
+        {navigation.some((item) => item.path === '/work-orders') && <div className="nav-group"><div className="nav-label">FIELD OPERATIONS</div>{navigation.filter((item) => item.path === '/work-orders').map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>}
+        {navigation.some((item) => item.path.startsWith('/network/') || item.path === '/network-quality') && <div className="nav-group"><div className="nav-label">NETWORK FOUNDATION</div>{navigation.filter((item) => item.path.startsWith('/network/') || item.path === '/network-quality').map((item) => <NavLink key={item.path} to={item.path} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>}
         {navigation.some((item) => ['/admin', '/admin/routing-rules', '/admin/sla-policies'].includes(item.path)) && <div className="nav-group"><div className="nav-label">ADMINISTRATION</div>{navigation.filter((item) => ['/admin', '/admin/routing-rules', '/admin/sla-policies'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>}
-        <div className="nav-group nav-group--account"><div className="nav-label">ACCOUNT</div>{navigation.filter((item) => item.path === '/profile').map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>
+        <div className="nav-group nav-group--account"><div className="nav-label">ACCOUNT</div>{navigation.filter((item) => ['/notifications', '/profile'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>
       </nav>
       <div className="sidebar-foot"><span className="environment-dot" />Project workspace<br /><small>Academic development environment</small></div>
       <div className="profile"><span className="avatar" aria-hidden="true">{initials}</span><span className="profile-copy"><strong>{user.full_name}</strong><small>{user.role.replace(/_/g, ' ')}</small></span></div>
     </aside>
     <div className="main-column">
       <header className="topbar">
-        <div className="topbar-left"><Button className="menu-button" aria-label="Open navigation" onClick={() => setMenuOpen(true)}>☰</Button><span className="breadcrumb">Workspace <span>/</span> {page.title}</span></div>
+        <div className="topbar-left"><Button id="navigation-toggle" className="menu-button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} aria-controls="main-sidebar" onClick={() => setMenuOpen((open) => !open)}>☰</Button><span className="breadcrumb">Workspace <span>/</span> {page.title}</span></div>
         <div className="topbar-actions"><Badge tone="blue">Development</Badge><Link to="/profile" className="top-avatar" aria-label={`Profile: ${user.full_name}`}>{initials}</Link><Button onClick={() => logout.mutate()} disabled={logout.isPending}>{logout.isPending ? 'Signing out…' : 'Sign out'}</Button></div>
       </header>
       <main className="content">
@@ -97,10 +126,18 @@ function AuthenticatedApp({ user }: { user: AuthUser }) {
           <Route path="/issues/new" element={<IssueCreatePage />} />
           <Route path="/issues/:id" element={<IssueDetailPage user={user} />} />
           <Route path="/profile" element={<ProfilePage user={user} />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/login" element={<Navigate to="/dashboard" replace />} />
           <Route path="/network" element={<Navigate to="/dashboard" replace />} />
           <Route path="/network/coverage" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/work-orders" element={<Navigate to="/issues" replace />} />
+          <Route path="/work-orders" element={<RoleGate allowed={workOrderRoles} role={user.role}><WorkOrderListPage user={user} /></RoleGate>} />
+          <Route path="/work-orders/:id" element={<RoleGate allowed={workOrderRoles} role={user.role}><WorkOrderDetailPage user={user} /></RoleGate>} />
+          <Route path="/network/devices" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkDevicesPage canManage={networkManagementRoles.has(user.role)} /></RoleGate>} />
+          <Route path="/network/devices/:id" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkDeviceDetailPage /></RoleGate>} />
+          <Route path="/network/networks" element={<RoleGate allowed={networkRoles} role={user.role}><NetworksPage canManage={networkManagementRoles.has(user.role)} /></RoleGate>} />
+          <Route path="/network/measurements/:id" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkMeasurementEvaluationPage user={user} /></RoleGate>} />
+          <Route path="/network/measurements" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkMeasurementsPage /></RoleGate>} />
+          <Route path="/network-quality" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkQualityPage /></RoleGate>} />
           <Route path="/assets" element={<RoleGate allowed={assetRoles} role={user.role}><AssetsPage /></RoleGate>} />
           <Route path="/analytics" element={<Navigate to="/dashboard" replace />} />
           <Route path="/reports" element={<Navigate to="/dashboard" replace />} />
@@ -128,8 +165,15 @@ function pageFor(path: string, role: AuthUser['role']) {
   if (path === '/issues') return { title: 'Issues', description: 'Review reports visible to your account.' , action: { label: '＋ Report an issue', path: '/issues/new' } }
   if (/^\/issues\/[^/]+$/.test(path)) return { title: 'Issue details', description: 'Review the report and its recorded status history.' }
   if (path === '/profile') return { title: 'Your profile', description: 'Review the account currently signed in.' }
-  if (path.startsWith('/network')) return { title: 'Network quality', description: 'Campus network measurement tools.' }
+  if (path === '/notifications') return { title: 'Notifications', description: 'Review internal updates relevant to your account.' }
+  if (path === '/network/devices') return { title: 'Network devices', description: 'Campus access points, switches, routers, and gateways.' }
+  if (/^\/network\/devices\/[^/]+$/.test(path)) return { title: 'Network device detail', description: 'Review the registered device and its raw measurement records.' }
+  if (path === '/network/networks') return { title: 'Networks', description: 'Campus Wi-Fi, LAN, and WAN inventory.' }
+  if (path === '/network/measurements') return { title: 'Measurements', description: 'Record and review raw network observations.' }
+  if (path === '/network-quality') return { title: 'Network Quality', description: 'Network quality measurements and operational analysis.' }
+  if (/^\/network\/measurements\/[^/]+$/.test(path)) return { title: 'Measurement evaluation', description: 'Review the transparent quality classification of one raw network measurement.' }
   if (path === '/work-orders') return { title: 'Work orders', description: 'Field work and maintenance coordination.' }
+  if (/^\/work-orders\/[^/]+$/.test(path)) return { title: 'Work-order details', description: 'Coordinate field work, evidence, and supervisor verification.' }
   if (path === '/assets') return { title: 'Assets', description: 'Registered equipment and its campus location.' }
   if (path === '/admin') return { title: 'Administration', description: 'Development access to reference data and accounts.' }
   if (path === '/admin/routing-rules') return { title: 'Routing rules', description: 'Configure how issue categories, locations, and priority route to operational teams.' }

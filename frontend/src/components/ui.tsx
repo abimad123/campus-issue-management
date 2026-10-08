@@ -25,6 +25,6 @@ export function EmptyState({ title, detail }: { title: string; detail: string })
   return <div className="empty-state"><span className="empty-mark" aria-hidden="true">—</span><h3>{title}</h3><p>{detail}</p></div>
 }
 
-export function ErrorState({ title = 'Unable to load this view', detail = 'Try again in a moment.' }: { title?: string; detail?: string }) {
-  return <div className="error-state" role="alert"><strong>{title}</strong><p>{detail}</p></div>
+export function ErrorState({ title = 'Unable to load this view', detail = 'Try again in a moment.', onRetry }: { title?: string; detail?: string; onRetry?: () => void }) {
+  return <div className="error-state" role="alert"><strong>{title}</strong><p>{detail}</p>{onRetry && <Button type="button" onClick={onRetry}>Try again</Button>}</div>
 }

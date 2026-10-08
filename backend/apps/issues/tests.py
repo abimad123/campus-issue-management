@@ -6,10 +6,10 @@ from django.test import override_settings
 from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image
-from rest_framework.test import APITestCase
+from rest_framework.test import APITransactionTestCase, APITestCase
 
 from apps.assets.models import Asset
-from apps.campus.models import Building, Campus, Location
+from apps.campus.models import Building, Campus, Location, Team
 from apps.users.models import User
 from apps.users.roles import UserRole
 
@@ -23,7 +23,7 @@ def png_upload(name="issue.png"):
     return SimpleUploadedFile(name, content.getvalue(), content_type="image/png")
 
 
-class IssueApiTests(APITestCase):
+class IssueApiTestSetup:
     def setUp(self):
         self.student = User.objects.create_user("student@example.test", "Sample Student", "test-password", role=UserRole.STUDENT)
         self.other_student = User.objects.create_user("other@example.test", "Other Student", "test-password", role=UserRole.STUDENT)
@@ -47,6 +47,7 @@ class IssueApiTests(APITestCase):
         data.update(updates)
         return data
 
+class IssueApiTests(IssueApiTestSetup, APITestCase):
     def test_student_can_create_and_view_only_their_own_issue(self):
         response = self.client.post(reverse("issue-list"), self.payload(), format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -64,6 +65,23 @@ class IssueApiTests(APITestCase):
         self.assertEqual(self.client.get(reverse("issue-list")).data["count"], 0)
         self.assertEqual(self.client.patch(reverse("issue-detail", args=[issue.pk]), {"title": "Changed"}, format="json").status_code, 403)
 
+    def test_supervisor_can_review_unassigned_issue_but_cannot_transition_before_assignment(self):
+        team = Team.objects.create(name="Supervisor test team")
+        supervisor = User.objects.create_user("supervisor@example.test", "Supervisor", "test-password", role=UserRole.SUPERVISOR)
+        team.members.add(supervisor)
+        created = self.client.post(reverse("issue-list"), self.payload(), format="json")
+        issue_id = created.data["id"]
+
+        self.client.force_authenticate(supervisor)
+        self.assertEqual(self.client.get(reverse("issue-detail", args=[issue_id])).status_code, 200)
+        transition = self.client.post(reverse("issue-status", args=[issue_id]), {"status": Issue.Status.IN_REVIEW}, format="json")
+        self.assertEqual(transition.status_code, 403)
+        assignment = self.client.post(f"/api/issues/{issue_id}/assign/", {"team": team.pk, "reason": "Supervisor accepts unassigned issue"}, format="json")
+        self.assertEqual(assignment.status_code, 201, assignment.data)
+        issue = Issue.objects.get(pk=issue_id)
+        self.assertEqual(issue.assigned_team_id, team.pk)
+        self.assertEqual(issue.status, Issue.Status.ASSIGNED)
+
     def test_create_validation_and_category_location_asset_apis(self):
         invalid = self.client.post(reverse("issue-list"), {**self.payload(), "description": "short"}, format="json")
         self.assertEqual(invalid.status_code, 400)
@@ -78,25 +96,6 @@ class IssueApiTests(APITestCase):
         self.assertEqual(self.client.get(reverse("asset-list")).status_code, 200)
         forbidden = self.client.post(reverse("issue-category-list"), {"name": "New category"}, format="json")
         self.assertEqual(forbidden.status_code, 403)
-
-    def test_photo_upload_accepts_images_and_rejects_non_images(self):
-        with TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as media_dir, override_settings(MEDIA_ROOT=media_dir):
-            valid = self.client.post(reverse("issue-list"), {**self.payload(), "photo": png_upload()}, format="multipart")
-            self.assertEqual(valid.status_code, 201, valid.data)
-            issue = Issue.objects.get(pk=valid.data["id"])
-            attachment = issue.attachments.get()
-            self.assertEqual(attachment.content_type, "image/png")
-            file_response = self.client.get(reverse("issue-attachment-file", args=[attachment.pk]))
-            self.assertEqual(file_response.status_code, 200)
-            self.assertEqual(file_response["X-Content-Type-Options"], "nosniff")
-            file_response.close()
-            self.client.force_authenticate(self.other_student)
-            self.assertEqual(self.client.get(reverse("issue-attachment-file", args=[attachment.pk])).status_code, 404)
-            self.client.force_authenticate(self.student)
-
-            bad_file = SimpleUploadedFile("script.exe", b"not an image", content_type="application/octet-stream")
-            invalid = self.client.post(reverse("issue-list"), {**self.payload(), "photo": bad_file}, format="multipart")
-            self.assertEqual(invalid.status_code, 400)
 
     def test_filters_and_pagination(self):
         for number in range(23):
@@ -129,8 +128,36 @@ class IssueApiTests(APITestCase):
         changed = self.client.post(reverse("issue-status", args=[issue.pk]), {"status": Issue.Status.IN_PROGRESS}, format="json")
         self.assertEqual(changed.status_code, 200, changed.data)
         self.assertEqual(issue.events.count(), 1)
-        invalid_transition = self.client.post(reverse("issue-status", args=[issue.pk]), {"status": Issue.Status.CLOSED}, format="json")
-        self.assertEqual(invalid_transition.status_code, 400)
+        for terminal_status in (Issue.Status.RESOLVED, Issue.Status.CLOSED, Issue.Status.REOPENED):
+            denied = self.client.post(reverse("issue-status", args=[issue.pk]), {"status": terminal_status}, format="json")
+            self.assertEqual(denied.status_code, 403, denied.data)
+        issue.refresh_from_db()
+        self.assertEqual(issue.status, Issue.Status.IN_PROGRESS)
+        self.assertIsNone(issue.resolved_at)
+        self.assertEqual(issue.events.count(), 1)
+
+    def test_manager_and_supervisor_can_resolve_issue_without_work_order(self):
+        team = Team.objects.create(name="Verification team")
+        supervisor = User.objects.create_user("reviewer@example.test", "Supervisor", "test-password", role=UserRole.SUPERVISOR)
+        team.members.add(supervisor)
+
+        for actor, suffix in ((self.admin, "admin"), (supervisor, "supervisor")):
+            issue = Issue.objects.create(
+                title=f"Repair completed by {suffix}",
+                description="A campus repair is ready to be reviewed and resolved without a field work order.",
+                category=self.category,
+                location=self.location,
+                reporter=self.student,
+                assigned_team=team,
+                status=Issue.Status.IN_PROGRESS,
+            )
+            self.client.force_authenticate(actor)
+            response = self.client.post(reverse("issue-status", args=[issue.pk]), {"status": Issue.Status.RESOLVED}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            issue.refresh_from_db()
+            self.assertEqual(issue.status, Issue.Status.RESOLVED)
+            self.assertIsNotNone(issue.resolved_at)
+            self.assertEqual(issue.events.get().to_status, Issue.Status.RESOLVED)
 
     def test_student_cannot_change_status(self):
         issue = Issue.objects.create(
@@ -142,3 +169,24 @@ class IssueApiTests(APITestCase):
         )
         response = self.client.post(reverse("issue-status", args=[issue.pk]), {"status": Issue.Status.IN_REVIEW}, format="json")
         self.assertEqual(response.status_code, 403)
+
+
+class IssueAttachmentApiTests(IssueApiTestSetup, APITransactionTestCase):
+    def test_photo_upload_accepts_images_and_rejects_non_images(self):
+        with TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as media_dir, override_settings(MEDIA_ROOT=media_dir):
+            valid = self.client.post(reverse("issue-list"), {**self.payload(), "photo": png_upload()}, format="multipart")
+            self.assertEqual(valid.status_code, 201, valid.data)
+            issue = Issue.objects.get(pk=valid.data["id"])
+            attachment = issue.attachments.get()
+            self.assertEqual(attachment.content_type, "image/png")
+            file_response = self.client.get(reverse("issue-attachment-file", args=[attachment.pk]))
+            self.assertEqual(file_response.status_code, 200)
+            self.assertEqual(file_response["X-Content-Type-Options"], "nosniff")
+            file_response.close()
+            self.client.force_authenticate(self.other_student)
+            self.assertEqual(self.client.get(reverse("issue-attachment-file", args=[attachment.pk])).status_code, 404)
+            self.client.force_authenticate(self.student)
+
+            bad_file = SimpleUploadedFile("script.exe", b"not an image", content_type="application/octet-stream")
+            invalid = self.client.post(reverse("issue-list"), {**self.payload(), "photo": bad_file}, format="multipart")
+            self.assertEqual(invalid.status_code, 400)

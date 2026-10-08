@@ -4,7 +4,7 @@
 
 `RoutingRule` records are evaluated only for new issues and only when active. Conditions are conjunctive: a blank category, location, or priority matches any value. Precedence is by the number of specified conditions (most specific first), then ascending `priority_order`, then ascending primary key. This makes ties repeatable. A match assigns the target team (and optional active team member), writes an `Assignment`, records the status event, creates internal team notifications, and writes an audit entry. If there is no match, an automatic `Assignment` outcome with a no-match reason is written; the issue remains unassigned and submission succeeds.
 
-Operational users may manually assign/reassign with a required reason. Campus and system administrators may assign any active team; supervisors may assign only to one of their own teams. Every assignment is retained as history; current assignment fields on `Issue` are a convenient projection, not the history source.
+Campus and system administrators may manually assign/reassign any active team with a required reason. Supervisors may assign only to one of their own teams. Facility managers, IT managers, and department heads do not have this manual assignment capability. Every assignment is retained as history; current assignment fields on `Issue` are a convenient projection, not the history source.
 
 ## SLA policy selection and persistence
 

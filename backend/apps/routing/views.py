@@ -1,7 +1,7 @@
 from django.db import transaction
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
 
 from apps.audit.services import record_audit
@@ -35,7 +35,12 @@ class IssueAssignmentViewSet(viewsets.GenericViewSet):
     @transaction.atomic
     @action(detail=True, methods=["post"], url_path="assign")
     def assign(self, request, pk=None):
-        issue = visible_issues_for(request.user).select_for_update().get(pk=pk)
+        visible_issue_id = visible_issues_for(request.user).filter(pk=pk).values_list("pk", flat=True).first()
+        if visible_issue_id is None:
+            raise NotFound()
+        # Keep the visibility query separate from the row lock: supervisor visibility
+        # uses DISTINCT across team membership, which PostgreSQL cannot lock directly.
+        issue = Issue.objects.select_for_update().get(pk=visible_issue_id)
         if request.user.role not in ADMIN_ROLES and request.user.role not in {UserRole.SUPERVISOR}:
             raise PermissionDenied("You are not allowed to reassign issues.")
         serializer = ManualAssignmentSerializer(data=request.data)

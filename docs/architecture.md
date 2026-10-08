@@ -2,13 +2,13 @@
 
 ## Current phase
 
-The repository has a React single-page application, a Django REST API, and PostgreSQL as the configured application database. The current phase implements identity, reference data, issue intake, configurable routing, persisted SLA deadlines, a bounded Celery Beat sweep, internal notifications, and audit history. Work orders, duplicate detection, feedback, network measurements, and analytics remain later work; inactive screens are labelled honestly.
+The repository has a React single-page application, a Django REST API, and PostgreSQL as the configured application database. Implemented workflows include identity, reference data, issue intake, configurable routing, persisted SLA deadlines, a bounded Celery Beat sweep, internal notifications, audit history, technician work orders with evidence and supervisor verification, network/device inventory, append-only raw measurements, versioned deterministic per-measurement quality evaluation, Phase 5.3A derived analytics APIs, the Phase 5.3B Network Quality dashboard, Phase 5.3C descriptive historical measurement trends, and Phase 5.4 operator-assisted measurement-to-issue context. Network readings remain supporting evidence; issues remain the operational source of truth. Forecasting, anomaly detection, alerts, and infrastructure polling remain out of scope.
 
 ## Frontend
 
-`frontend/src/App.tsx` owns authenticated routing, role-aware navigation, sign-out, and the application shell. `features/auth` handles sign-in; `features/issues` contains issue list, intake, detail, dashboard summary, assignment and status update screens; `features/admin` contains the routing-rule and SLA-policy forms; `features/assets` reads the asset register. UI primitives are in `components/ui.tsx`, shared API calls and CSRF handling are in `lib/api.ts`, and API response contracts are in `types/api.ts`.
+`frontend/src/App.tsx` owns authenticated routing, role-aware navigation, sign-out, and the application shell. `features/auth` handles sign-in; `features/issues` contains issue list, intake, detail, dashboard summary, assignment and status update screens; `features/workorders` contains technician and supervisor queues and operational actions; `features/notifications` provides the recipient-scoped notification inbox and read state; `features/admin` contains routing-rule and SLA-policy forms; `features/assets` reads the asset register; `features/network` contains network inventory, evaluations, operational analytics, and historical trends. UI primitives are in `components/ui.tsx`, shared API calls and CSRF handling are in `lib/api.ts`, and API response contracts are in `types/api.ts`.
 
-TanStack Query owns API data fetching and cache invalidation. React Router provides `/login`, `/dashboard`, `/issues`, `/issues/new`, `/issues/:id`, `/profile`, `/assets`, `/admin/routing-rules`, `/admin/sla-policies`, and explicitly inactive future module routes. The issue list uses database-backed filters and page-number pagination. The issue form loads category, location, and asset options from APIs and accepts one optional image.
+TanStack Query owns API data fetching and cache invalidation. React Router provides `/login`, `/dashboard`, `/issues`, `/issues/new`, `/issues/:id`, `/work-orders`, `/work-orders/:id`, `/notifications`, `/profile`, `/assets`, `/network/devices`, `/network/devices/:id`, `/network/networks`, `/network/measurements`, `/network/measurements/:id`, and administrator workflow configuration. Issue, work-order, and network-record lists use database-backed filters and page-number pagination. Network pages are role-gated and provide retry, loading, empty, and submission-feedback states. Operational dashboards show role-scoped queues from persisted work orders; notifications link to relevant issues and support marking items read.
 
 ## Identity and permissions
 
@@ -21,6 +21,7 @@ Roles are `STUDENT`, `STAFF`, `TECHNICIAN`, `SUPERVISOR`, `FACILITY_MANAGER`, `I
 - Supervisors can view and update issues assigned to one of their teams.
 - Facility and IT managers, department heads, campus administrators, and system administrators have broader issue visibility.
 - Campus and system administrators can modify campus reference data, issue categories, and assets.
+- Technicians, supervisors, IT managers, and campus/system administrators can view network operations records; only IT managers and campus/system administrators can change network inventory. Raw measurements are append-only and record their authenticated submitter.
 - Django Admin access requires a staff account; seeded system administrator is a superuser for local development.
 
 No public registration endpoint exists. Create initial operators through `createsuperuser` or the explicitly synthetic development seed command.
@@ -36,9 +37,9 @@ No public registration endpoint exists. Create initial operators through `create
 | `core` | Health/liveness endpoint and infrastructure smoke task |
 | `routing` | Data-driven routing rules, assignment history, deterministic matching and controlled reassignment |
 | `sla` | SLA policies, escalation ladder, SLA events, policy selection and bounded periodic processing |
-| `workorders` | Future work assignment and completion boundary |
+| `workorders` | WorkOrder lifecycle, technician assignment, notes, materials, evidence, history, audit and notifications |
 | `feedback` | Future satisfaction and reopening feedback boundary |
-| `network` | Future measurements and coverage boundary |
+| `network` | Campus-scoped network inventory, location-linked devices, append-only raw measurements, per-measurement evaluation, and `IssueNetworkContext` provenance links |
 | `analytics` | Future database-backed operational summaries |
 | `notifications` | Internal per-recipient notification inbox and read state |
 | `audit` | Append-only administrative and operational audit records |
@@ -49,13 +50,13 @@ Domain models live in the app that owns their lifecycle. Cross-domain references
 
 The campus structure is `Campus → Building → Location`; a Location may have a parent Location for smaller subareas and may omit a Building for outdoor areas. Departments own optional Teams; a user may belong to multiple teams. Assets reference a Location. Issues reference a reporter, category, Location, optional Asset, optional assigned user/team, controlled priority, and controlled status. IssueEvent stores real creation and status-change events; the UI does not synthesize activity history.
 
-Issue attachments are restricted to JPEG, PNG, and WebP images, at most 5 MB and 20 megapixels. Files are stored under `MEDIA_ROOT`, but no public media URL is configured. The API streams files through an authenticated view that checks visibility of the parent issue and sends `nosniff` and private cache headers. Asset QR responses contain the asset’s opaque UUID identifier, not a database password or other secret.
+Issue and work-order evidence attachments are restricted to JPEG, PNG, and WebP images, at most 5 MB and 20 megapixels. Files are stored under `MEDIA_ROOT`, but no public media URL is configured. The API streams files through authenticated views that check visibility of the parent issue/work order and sends `nosniff` and private cache headers. Asset QR responses contain the asset’s opaque UUID identifier, not a database password or other secret.
 
 ## API conventions
 
 The API root is `/api/`. Serializers validate input and control role-sensitive output; protected views use session authentication and explicit permission classes. Issue lists are scoped before filters are applied, preventing students from retrieving another reporter’s issues by changing query parameters. Issue status changes go through a service that validates the lifecycle and writes an IssueEvent in one database transaction. Issue updates and deletion are not exposed as general CRUD endpoints.
 
-Authentication endpoints are `/api/auth/login/`, `/api/auth/logout/`, and `/api/auth/me/`; `/api/auth/csrf/` initializes the CSRF cookie. Reference endpoints cover campuses, buildings, locations, departments, teams, issue categories, and assets. Issue endpoints support list, create, detail, assignment, scoped `/status/`, and role-scoped `/summary/`. Admin-only APIs manage routing rules and SLA policies. Notifications are user-scoped and attachments use a separate authorized file endpoint.
+Authentication endpoints are `/api/auth/login/`, `/api/auth/logout/`, and `/api/auth/me/`; `/api/auth/csrf/` initializes the CSRF cookie. Reference endpoints cover campuses, buildings, locations, departments, teams, issue categories, and assets. Issue endpoints support list, create, detail, assignment, scoped `/status/`, role-scoped `/summary/`, and network context read/attach. Network measurement endpoints support an explicit operator action to create an issue through the existing issue serializer and normal routing/SLA pipeline. `IssueNetworkContext` snapshots evaluator version, quality, and primary factor without copying raw readings, which remain on the source measurement. Network context APIs require network-reader access and the existing issue object permission. Work orders remain optional. Network Quality does not automatically create campus issues from threshold breaches. Work orders expose explicit assignment, accept, start, notes, material, evidence, completion, verification, rework, close, and cancel actions. Admin-only APIs manage routing rules and SLA policies. Notifications are user-scoped and attachments use separate authorized file endpoints.
 
 ## Seed data and development
 
@@ -69,4 +70,4 @@ Routing and SLA services are database driven and documented in [routing-and-sla.
 
 ## Later modules
 
-Work orders, duplicate detection, feedback, network measurement, maps, analytics, and prediction remain future scope. When implemented, derive analytics from persisted records and retain the current backend permission boundary.
+Duplicate detection, feedback, maps/coverage analytics, alerts, anomaly detection, and prediction remain future scope. Phase 5.3A backend aggregations, the Phase 5.3B dashboard, Phase 5.3C descriptive history, and Phase 5.4 operator-assisted issue context, including time windows, filters, provenance, and permission rules, are documented in [network-foundation.md](network-foundation.md); no real-device polling or external monitoring integrations are present. Analytics derive from persisted records and retain the backend permission boundary.

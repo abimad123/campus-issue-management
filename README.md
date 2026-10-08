@@ -2,21 +2,23 @@
 
 An academic project for campus service requests, maintenance coordination, and network quality work in a realistic university setting. Lovely Professional University is the project context; this software does not claim official affiliation with or operation by LPU.
 
-**Current phase: Configurable routing and SLA engine.** This release includes session authentication, role-based API access, campus reference data, issue intake, configurable team routing, persistent SLA deadlines, warnings/breaches/escalations through a periodic Celery sweep, internal notifications, and audit records. Work orders, duplicate detection, feedback, network measurements, and analytics are not implemented yet.
+**Current phase: Phase 5.4 — Operator-Assisted Network Finding to Issue Context.** The application includes session authentication, role-based API access, campus reference data, issue intake, configurable routing, persistent SLA deadlines and escalation, internal notifications, audit history, technician work orders with private evidence and supervisor verification, network inventory, validated operator-submitted raw measurements, deterministic per-measurement quality evaluation, derived network analytics and historical trends, and an operator-reviewed path to create or contextualize campus issues. Network readings remain supporting evidence; the campus issue remains the operational source of truth.
 
 ## Stack and structure
 
 - Backend: Python 3.12+, Django 5, Django REST Framework, PostgreSQL, `django-filter`, Pillow, `qrcode`
 - Frontend: React 18, TypeScript, Vite, Tailwind CSS, React Router, TanStack Query
-- Background services: Celery, Celery Beat, Redis (infrastructure only in this phase)
+- Background services: Celery, Celery Beat, Redis
 - Development stack: Docker Compose
 
     backend/config/       Django settings, URLs, ASGI/WSGI, Celery
     backend/apps/users/   Custom email identity, roles, session auth
     backend/apps/campus/  Campuses, buildings, locations, departments, teams
     backend/apps/issues/  Categories, issues, attachments, status events, filters
+    backend/apps/workorders/  Operational tasks, technician workflow, evidence, verification
     backend/apps/assets/  Asset registry and protected QR endpoint
-    frontend/src/         Application shell and role-aware issue workflows
+    backend/apps/network/ Network, device, and append-only measurement records
+    frontend/src/         Application shell and role-aware issue/work-order/network workflows
     docs/                 Architecture and domain model
 
 ## Local setup
@@ -44,7 +46,7 @@ Requirements: Python 3.12+, Node.js 20+, npm, PostgreSQL 16, and Redis. From the
 
 The frontend runs at `http://localhost:5173`, the API at `http://localhost:8000/api/`, and Django Admin at `http://localhost:8000/admin/`.
 
-Read [docs/routing-and-sla.md](docs/routing-and-sla.md) for routing precedence, policy selection, the periodic SLA worker, escalation behavior, and endpoints. Configure rules and policies in the administrator UI at `/admin/routing-rules` and `/admin/sla-policies`. The Docker Compose stack includes the Celery worker and Beat service; Beat runs the SLA sweep every minute and does not enqueue one timer per issue.
+Read [docs/routing-and-sla.md](docs/routing-and-sla.md) for routing precedence, policy selection, the periodic SLA worker, escalation behavior, and endpoints. Read [docs/network-foundation.md](docs/network-foundation.md) for network inventory, measurement constraints, permissions, and endpoints. Configure rules and policies in the administrator UI at `/admin/routing-rules` and `/admin/sla-policies`. The Docker Compose stack includes the Celery worker and Beat service; Beat runs the SLA sweep every minute and does not enqueue one timer per issue.
 
 ### Authentication
 
@@ -52,7 +54,7 @@ The React app uses Django’s database-backed session authentication. It request
 
 ### Development seed data
 
-`python manage.py seed_development` is idempotent and creates one explicitly synthetic campus, example buildings and locations, departments, teams, categories, role-specific users, and a small asset inventory. It creates no sample issues. Choose a private password when prompted; all seeded accounts share it for local convenience.
+`python manage.py seed_development` is idempotent and creates one explicitly synthetic campus, example buildings and locations, departments, teams, categories, role-specific users, a small asset inventory, three synthetic network types, and representative device types. It creates no sample issues or measurements. Choose a private password when prompted; all seeded accounts share it for local convenience.
 
 ### Tests and checks
 
@@ -95,9 +97,30 @@ All resource endpoints require an authenticated session unless noted.
 | `GET /api/issues/:id/` | Read an authorized issue, its attachments, and recorded status events |
 | `POST /api/issues/:id/status/` | Move an issue through an allowed status transition |
 | `GET /api/issue-attachments/:id/file/` | Stream an image after issue-level authorization |
+| `GET /api/work-orders/`, `/api/work-orders/:id/` | List and retrieve work orders visible to the signed-in operational role |
+| `POST /api/issues/:id/work-orders/` | Create an operational work order from an authorized issue |
+| `POST /api/work-orders/:id/assign/` | Assign or reassign to an active technician in the selected team |
+| `POST /api/work-orders/:id/accept/`, `/start/` | Accept assigned work and begin field work |
+| `POST /api/work-orders/:id/notes/`, `/materials/`, `/evidence/` | Record field notes, materials, and private image evidence |
+| `POST /api/work-orders/:id/complete/` | Submit a required resolution summary for supervisor review |
+| `POST /api/work-orders/:id/verify/`, `/rework/`, `/close/`, `/cancel/` | Verify or return work, then close or cancel under operational permissions |
+| `GET /api/work-order-evidence/:id/file/` | Stream evidence after work-order authorization |
+| `GET /api/work-orders/summary/` | Return database-backed work-order counts scoped to the current user |
+| `GET /api/notifications/` | List notifications addressed to the signed-in user |
+| `POST /api/notifications/:id/read/` | Mark one of the signed-in user's notifications as read |
+| `GET, POST /api/networks/` | List or register campus Wi-Fi, LAN, and WAN records |
+| `GET, POST /api/network-devices/`, `GET /api/network-devices/:id/` | List/register devices or retrieve a device record |
+| `GET, POST /api/network-measurements/`, `GET /api/network-measurements/:id/` | List or append raw measurement records; updates and deletes are not exposed |
+| `GET /api/network-measurements/:id/evaluation/` | Return deterministic, versioned per-measurement quality explanation |
+| `POST /api/network-measurements/:id/create-issue/` | Create a reviewed campus issue through the normal issue pipeline and attach this measurement as evidence |
+| `GET`, `POST /api/issues/:id/network-context/` | Read or attach measurement context, subject to both network-reader and issue-object permissions |
+| `GET /api/network-analytics/summary/` | Return actual measurement counts, quality distribution, latest reading, and evaluated primary factors |
+| `GET /api/network-analytics/campuses/`, `/locations/`, `/buildings/`, `/devices/`, `/networks/` | Return paginated summaries for represented entities |
+| `GET /api/network-analytics/problem-locations/`, `/problem-devices/` | Return locations/devices with poor or critical measurements in deterministic priority order |
+| `GET /api/network-analytics/factors/` | Return primary-factor counts and their share of degraded measurements |
 
-Issue collections support page-number pagination (20 per page) and filters: `status`, `priority`, `category`, `location`, `reporter`, `created_after`, and `created_before`. Location and asset selectors support bounded server-side search. Campus, category, and asset writes are restricted to campus or system administrators. See [docs/architecture.md](docs/architecture.md) and [docs/domain-model.md](docs/domain-model.md) for model ownership and visibility rules.
+Issue and work-order collections support page-number pagination (20 per page); work orders can be filtered by status, team, technician, and issue. Issue search is visibility-scoped and supports bounded server-side searching. Location and asset selectors support bounded server-side search. Campus, category, and asset writes are restricted to campus or system administrators. Network analytics are derived from stored measurements and versioned evaluations; they do not modify source data or represent live infrastructure. Network Quality does not automatically create campus issues from threshold breaches. Contextual issue creation requires an operator to review and explicitly submit the normal issue form; attaching existing evidence does not change issue status, assignment, SLA, notifications, or work orders. See [docs/architecture.md](docs/architecture.md), [docs/domain-model.md](docs/domain-model.md), [docs/work-orders.md](docs/work-orders.md), and [docs/network-foundation.md](docs/network-foundation.md) for details.
 
 ## Current boundaries
 
-Students and staff can create reports and see only their own. Technicians see records assigned to them; supervisors see records assigned to their teams; designated managers and administrators have broader issue visibility. Assignment and routing workflows are not provided yet, so operational assignments are currently a data/permission foundation managed through development administration. Issue photos accept JPEG, PNG, or WebP up to 5 MB and are served only through an authenticated, issue-authorized endpoint.
+Students and staff can create reports and see only their own; they have no work-order controls. Technicians see only work orders assigned to their active account. Supervisors see work orders for their teams, while designated managers and administrators have broader operational visibility. Technician assignment requires an active technician who is a member of the selected active team. Issue and work-order images accept JPEG, PNG, or WebP up to 5 MB and are served only through authenticated, scope-checked endpoints. Supervisor verification may resolve an in-progress issue; closing that issue remains a separate issue lifecycle action. Network inventory is visible to technicians, supervisors, IT managers, and campus/system administrators; inventory changes are limited to IT managers and campus/system administrators. Measurements remain append-only operator-submitted records; quality classifications are deterministic explanations and are not live device telemetry. Network measurements never trigger automatic issue or work-order generation.

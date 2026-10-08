@@ -5,11 +5,24 @@ from django.db.models import Q
 
 
 class IssueFilter(django_filters.FilterSet):
+    search = django_filters.CharFilter(method="filter_search", max_length=120)
     created_after = django_filters.DateFilter(field_name="created_at", lookup_expr="date__gte")
     created_before = django_filters.DateFilter(field_name="created_at", lookup_expr="date__lte")
     assigned_team = django_filters.NumberFilter(field_name="assigned_team_id")
     unassigned = django_filters.BooleanFilter(method="filter_unassigned")
     sla_state = django_filters.CharFilter(method="filter_sla_state")
+
+    def filter_search(self, queryset, name, value):
+        value = value.strip()
+        if not value:
+            return queryset
+        return queryset.filter(
+            Q(ticket_number__icontains=value)
+            | Q(title__icontains=value)
+            | Q(description__icontains=value)
+            | Q(location__name__icontains=value)
+            | Q(location__building__name__icontains=value)
+        ).distinct()
 
     def filter_unassigned(self, queryset, name, value):
         return queryset.filter(assigned_team__isnull=True) if value else queryset

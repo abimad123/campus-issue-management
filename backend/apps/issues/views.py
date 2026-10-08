@@ -1,11 +1,8 @@
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
 from rest_framework.response import Response
-
-from apps.users.roles import ISSUE_MANAGEMENT_ROLES, UserRole
 
 from .access import visible_issues_for
 from .filters import IssueFilter
@@ -18,6 +15,10 @@ from .serializers import (
     IssueListSerializer,
     IssueStatusSerializer,
 )
+from apps.network.models import IssueNetworkContext
+from apps.network.permissions import CanReadNetworkOperations
+from apps.network.serializers import IssueNetworkContextCreateSerializer, IssueNetworkContextSerializer
+from apps.network.services import attach_network_context
 
 
 class IssueCategoryViewSet(viewsets.ModelViewSet):
@@ -71,13 +72,36 @@ class IssueViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.Crea
     @action(detail=True, methods=["post"], permission_classes=[IssuePermission], url_path="status")
     def status(self, request, pk=None):
         issue = self.get_object()
-        if request.user.role not in ISSUE_MANAGEMENT_ROLES and not (
-            request.user.role == UserRole.TECHNICIAN and issue.assigned_to_id == request.user.id
-        ) and not (
-            request.user.role == UserRole.SUPERVISOR and issue.assigned_team_id in request.user.teams.values_list("id", flat=True)
-        ):
-            raise PermissionDenied("You cannot change the status of this issue.")
         serializer = IssueStatusSerializer(data=request.data, context={"issue": issue, "request": request})
         serializer.is_valid(raise_exception=True)
         issue = serializer.save()
         return Response(IssueDetailSerializer(issue, context=self.get_serializer_context()).data)
+
+    @action(
+        detail=True,
+        methods=["get", "post"],
+        permission_classes=[IssuePermission, CanReadNetworkOperations],
+        url_path="network-context",
+    )
+    def network_context(self, request, pk=None):
+        issue = self.get_object()
+        if request.method == "GET":
+            contexts = IssueNetworkContext.objects.filter(issue=issue).select_related(
+                "network_measurement__network",
+                "network_measurement__device",
+                "network_measurement__location__building",
+                "created_by",
+            )
+            page = self.paginate_queryset(contexts)
+            result = IssueNetworkContextSerializer(page, many=True, context=self.get_serializer_context())
+            return self.get_paginated_response(result.data)
+
+        context_input = IssueNetworkContextCreateSerializer(data=request.data)
+        context_input.is_valid(raise_exception=True)
+        context = attach_network_context(
+            issue=issue,
+            measurement=context_input.validated_data["network_measurement"],
+            actor=request.user,
+        )
+        result = IssueNetworkContextSerializer(context, context=self.get_serializer_context())
+        return Response(result.data, status=status.HTTP_201_CREATED)

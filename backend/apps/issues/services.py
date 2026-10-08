@@ -31,6 +31,12 @@ def can_change_issue_status(user, issue):
 def transition_issue(issue, *, new_status, actor, note=""):
     if not can_change_issue_status(actor, issue):
         raise PermissionDenied("You are not allowed to update this issue status.")
+    if actor.role == UserRole.TECHNICIAN and new_status in {
+        Issue.Status.RESOLVED,
+        Issue.Status.CLOSED,
+        Issue.Status.REOPENED,
+    }:
+        raise PermissionDenied("Technicians must complete work through work-order verification before resolving an issue.")
     if new_status not in ALLOWED_TRANSITIONS.get(issue.status, set()):
         raise ValidationError({"status": f"Cannot change an issue from {issue.status} to {new_status}."})
 

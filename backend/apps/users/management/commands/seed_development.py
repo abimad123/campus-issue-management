@@ -7,6 +7,7 @@ from django.db import transaction
 from apps.assets.models import Asset
 from apps.campus.models import Building, Campus, Department, Location, Team
 from apps.issues.models import IssueCategory
+from apps.network.models import Network, NetworkDevice
 from apps.users.models import User
 from apps.users.roles import UserRole
 
@@ -119,5 +120,33 @@ class Command(BaseCommand):
                 defaults={"name": name, "asset_type": asset_type, "location": locations[location_key]},
             )
 
-        self.stdout.write(self.style.SUCCESS("Synthetic development campus, categories, teams, users, and assets are ready."))
+        wifi, _ = Network.objects.get_or_create(
+            campus=campus, code="dev-wifi",
+            defaults={"building": buildings["computing"], "name": "Synthetic Computing Wi-Fi", "kind": Network.Kind.WIFI, "description": "Synthetic development network; not real LPU infrastructure."},
+        )
+        lan, _ = Network.objects.get_or_create(
+            campus=campus, code="dev-lan",
+            defaults={"building": buildings["computing"], "name": "Synthetic Computing LAN", "kind": Network.Kind.LAN, "description": "Synthetic development network; not real LPU infrastructure."},
+        )
+        wan, _ = Network.objects.get_or_create(
+            campus=campus, code="dev-wan",
+            defaults={"name": "Synthetic Campus WAN", "kind": Network.Kind.WAN, "description": "Synthetic development network; not real LPU infrastructure."},
+        )
+        for device_code, name, kind, network, location_key, asset_code in [
+            ("DEV-NET-AP-01", "Synthetic Computer Lab Access Point", NetworkDevice.Kind.ACCESS_POINT, wifi, "cs-lab-1", "AP-CS-001"),
+            ("DEV-NET-SW-01", "Synthetic Computing Switch", NetworkDevice.Kind.SWITCH, lan, "cs-lab-1", ""),
+            ("DEV-NET-RTR-01", "Synthetic Campus Router", NetworkDevice.Kind.ROUTER, wan, "admin-service", ""),
+            ("DEV-NET-GW-01", "Synthetic Campus Gateway", NetworkDevice.Kind.GATEWAY, wan, "admin-service", ""),
+        ]:
+            NetworkDevice.objects.get_or_create(
+                device_code=device_code,
+                defaults={
+                    "name": name, "kind": kind, "network": network,
+                    "location": locations[location_key],
+                    "asset": Asset.objects.filter(asset_code=asset_code).first() if asset_code else None,
+                    "manufacturer": "Synthetic Example Vendor", "model_number": "Development Model 1",
+                },
+            )
+
+        self.stdout.write(self.style.SUCCESS("Synthetic development campus, categories, teams, users, assets, and network inventory are ready."))
         self.stdout.write("All seeded accounts use the password entered above. Do not reuse it outside local development.")

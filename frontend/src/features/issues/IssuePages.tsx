@@ -2,11 +2,13 @@ import { useDeferredValue, useEffect, useMemo, useState, type FormEvent } from '
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiRequest } from '../../lib/api'
-import type { AssetOption, AuthUser, IssueCategory, IssuePriority, IssueRecord, IssueStatus, LocationOption, Paginated } from '../../types/api'
+import type { AssetOption, AuthUser, IssueCategory, IssueNetworkContext, IssuePriority, IssueRecord, IssueStatus, LocationOption, NetworkQualityEvaluation, Paginated } from '../../types/api'
 import { Badge, Button, EmptyState, ErrorState, Input, Loading, Select } from '../../components/ui'
+import { IssueWorkOrdersSection } from '../workorders/WorkOrderPages'
 
 const statuses: IssueStatus[] = ['OPEN', 'IN_REVIEW', 'ASSIGNED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'REOPENED']
 const priorities: IssuePriority[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
+const networkReaderRoles = new Set<AuthUser['role']>(['TECHNICIAN', 'SUPERVISOR', 'IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
 const statusLabels: Record<IssueStatus, string> = {
   OPEN: 'Open', IN_REVIEW: 'In review', ASSIGNED: 'Assigned', IN_PROGRESS: 'In progress', RESOLVED: 'Resolved', CLOSED: 'Closed', REOPENED: 'Reopened',
 }
@@ -63,7 +65,7 @@ export function IssueListPage({ user }: { user: AuthUser }) {
     </div>
     {categoriesQuery.isError && <ErrorState title="Categories could not be loaded" detail={friendlyError(categoriesQuery.error)} />}
     {issuesQuery.isPending ? <div className="state-panel"><Loading label="Loading issues" /></div>
-      : issuesQuery.isError ? <ErrorState title="Issues could not be loaded" detail={friendlyError(issuesQuery.error)} />
+      : issuesQuery.isError ? <ErrorState title="Issues could not be loaded" detail={friendlyError(issuesQuery.error)} onRetry={() => { void issuesQuery.refetch() }} />
         : issuesQuery.data.count === 0 ? <div className="state-panel"><EmptyState title="No issues found" detail="Change the filters or report a campus issue to start a record." /><Link className="button button--primary" to="/issues/new">Report an issue</Link></div>
           : <>
             <div className="table-scroll"><table className="issue-table"><thead><tr><th scope="col">Ticket</th><th scope="col">Issue</th><th scope="col">Category</th><th scope="col">Location</th><th scope="col">Priority</th><th scope="col">Status</th>{operational && <><th scope="col">Team</th><th scope="col">SLA</th></>}<th scope="col">Reported by</th><th scope="col">Created</th></tr></thead>
@@ -85,6 +87,8 @@ export function IssueListPage({ user }: { user: AuthUser }) {
 
 export function IssueCreatePage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const networkMeasurementId = searchParams.get('network_measurement')
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState('')
   const [location, setLocation] = useState('')
@@ -97,13 +101,33 @@ export function IssueCreatePage() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const deferredLocationSearch = useDeferredValue(locationSearch)
   const deferredAssetSearch = useDeferredValue(assetSearch)
+  const networkEvidenceQuery = useQuery({
+    queryKey: ['network-measurement-evaluation', networkMeasurementId],
+    queryFn: () => apiRequest<NetworkQualityEvaluation>(`/network-measurements/${networkMeasurementId}/evaluation/`),
+    enabled: Boolean(networkMeasurementId),
+  })
   const categoriesQuery = useQuery({ queryKey: ['issue-categories'], queryFn: () => apiRequest<Paginated<IssueCategory>>('/issue-categories/') })
   const locationsQuery = useQuery({ queryKey: ['issue-form-locations', deferredLocationSearch], queryFn: () => apiRequest<Paginated<LocationOption>>(`/locations/${deferredLocationSearch ? `?search=${encodeURIComponent(deferredLocationSearch)}` : ''}`) })
   const assetsQuery = useQuery({ queryKey: ['issue-form-assets', deferredAssetSearch], queryFn: () => apiRequest<Paginated<AssetOption>>(`/assets/${deferredAssetSearch ? `?search=${encodeURIComponent(deferredAssetSearch)}` : ''}`) })
   const createIssue = useMutation({
-    mutationFn: (formData: FormData) => apiRequest<IssueRecord>('/issues/', { method: 'POST', body: formData }),
+    mutationFn: (formData: FormData) => apiRequest<IssueRecord>(networkMeasurementId
+      ? `/network-measurements/${networkMeasurementId}/create-issue/`
+      : '/issues/', { method: 'POST', body: formData }),
     onSuccess: (issue) => navigate(`/issues/${issue.id}`, { replace: true }),
   })
+
+  useEffect(() => {
+    const evidence = networkEvidenceQuery.data
+    if (!evidence) return
+    const measurement = evidence.measurement
+    setLocation(String(measurement.location))
+    setLocationSearch(measurement.location_name)
+    setTitle((current) => current || `Network concern: ${measurement.network_name}${measurement.device_code ? ` · ${measurement.device_code}` : ''}`.slice(0, 160))
+    setDescription((current) => current || `Operator-reviewed network finding measured ${new Date(measurement.measured_at).toLocaleString()}. Evaluation: ${evidence.overall_quality}. Primary factor: ${evidence.primary_factor_label ?? 'Not determined'}. Describe the user impact and any additional observations before submitting.`)
+    const categoryName = measurement.network_kind === 'WIFI' ? 'Wi-Fi' : 'Network'
+    const match = categoriesQuery.data?.results.find((item) => item.name.toLocaleLowerCase() === categoryName.toLocaleLowerCase())
+    if (match) setCategory((current) => current || String(match.id))
+  }, [categoriesQuery.data, networkEvidenceQuery.data])
 
   useEffect(() => {
     if (!photo) { setPhotoPreview(null); return }
@@ -125,12 +149,12 @@ export function IssueCreatePage() {
     createIssue.mutate(data)
   }
 
-  const optionsPending = categoriesQuery.isPending || locationsQuery.isPending || assetsQuery.isPending
-  const optionsError = categoriesQuery.error ?? locationsQuery.error ?? assetsQuery.error
+  const optionsPending = categoriesQuery.isPending || locationsQuery.isPending || assetsQuery.isPending || Boolean(networkMeasurementId && networkEvidenceQuery.isPending)
+  const optionsError = categoriesQuery.error ?? locationsQuery.error ?? assetsQuery.error ?? networkEvidenceQuery.error
   return <section className="report-layout" aria-labelledby="report-title">
-    <div className="report-intro"><div className="eyebrow">CAMPUS SERVICE REQUEST</div><h2 id="report-title">Tell us what needs attention</h2><p>Share the location and a short description. The operations team can follow up from your report.</p><div className="privacy-note"><span aria-hidden="true">i</span><p>Your report is linked to your account so you can track its status.</p></div></div>
+    <div className="report-intro"><div className="eyebrow">CAMPUS SERVICE REQUEST</div><h2 id="report-title">Tell us what needs attention</h2><p>Share the location and a short description. The operations team can follow up from your report.</p><div className="privacy-note"><span aria-hidden="true">i</span><p>Your report is linked to your account so you can track its status.</p></div>{networkMeasurementId && networkEvidenceQuery.data && <NetworkEvidenceSummary evaluation={networkEvidenceQuery.data} />}</div>
     {optionsPending ? <div className="state-panel"><Loading label="Loading categories and campus locations" /></div>
-      : optionsError ? <ErrorState title="The issue form could not load" detail={friendlyError(optionsError)} />
+        : optionsError ? <ErrorState title="The issue form could not load" detail={friendlyError(optionsError)} onRetry={() => { void categoriesQuery.refetch(); void locationsQuery.refetch(); void assetsQuery.refetch() }} />
         : <form className="report-form" onSubmit={submit}>
           {createIssue.isError && <div className="form-error" role="alert">{friendlyError(createIssue.error)}</div>}
           <div className="form-field"><label htmlFor="issue-title">What is the problem? <span className="required-mark">Required</span></label><Input id="issue-title" name="title" value={title} onChange={(event) => setTitle(event.target.value)} minLength={4} maxLength={160} autoFocus required placeholder="For example, projector is not turning on" /><small>Short summary, up to 160 characters.</small></div>
@@ -152,7 +176,8 @@ export function IssueCreatePage() {
 const transitions: Partial<Record<IssueStatus, IssueStatus[]>> = {
   OPEN: ['IN_REVIEW'], IN_REVIEW: ['ASSIGNED'], ASSIGNED: ['IN_PROGRESS'], IN_PROGRESS: ['RESOLVED'], RESOLVED: ['CLOSED', 'REOPENED'], CLOSED: ['REOPENED'], REOPENED: ['IN_REVIEW'],
 }
-const managers = new Set<AuthUser['role']>(['FACILITY_MANAGER', 'IT_MANAGER', 'DEPARTMENT_HEAD', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
+const managers = new Set<AuthUser['role']>(['CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
+const issueManagementRoles = new Set<AuthUser['role']>(['FACILITY_MANAGER', 'IT_MANAGER', 'DEPARTMENT_HEAD', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
 
 export function IssueDetailPage({ user }: { user: AuthUser }) {
   const { id = '' } = useParams()
@@ -167,12 +192,15 @@ export function IssueDetailPage({ user }: { user: AuthUser }) {
   })
 
   if (issueQuery.isPending) return <div className="state-panel"><Loading label="Loading issue" /></div>
-  if (issueQuery.isError) return <ErrorState title="Issue could not be loaded" detail={friendlyError(issueQuery.error)} />
+  if (issueQuery.isError) return <ErrorState title="Issue could not be loaded" detail={friendlyError(issueQuery.error)} onRetry={() => { void issueQuery.refetch() }} />
   const issue = issueQuery.data
-  const canUpdate = managers.has(user.role)
+  const canUpdate = issueManagementRoles.has(user.role)
     || (user.role === 'TECHNICIAN' && issue.assigned_to === user.id)
     || (user.role === 'SUPERVISOR' && issue.assigned_team !== null && user.team_ids.includes(issue.assigned_team))
-  const nextStatuses = canUpdate ? transitions[issue.status] ?? [] : []
+  const availableTransitions = transitions[issue.status] ?? []
+  const nextStatuses = canUpdate
+    ? user.role === 'TECHNICIAN' ? availableTransitions.filter((status) => status === 'IN_PROGRESS') : availableTransitions
+    : []
 
   return <section className="issue-detail-layout">
     <div className="detail-main">
@@ -182,6 +210,8 @@ export function IssueDetailPage({ user }: { user: AuthUser }) {
       <section className="detail-section"><h3>Description</h3><p className="issue-description">{issue.description}</p></section>
       <section className="detail-section"><h3>Photos</h3>{issue.attachments?.length ? <div className="attachment-grid">{issue.attachments.map((attachment) => <figure key={attachment.id}><a href={attachment.file_url} target="_blank" rel="noreferrer"><img src={attachment.file_url} alt={`Attachment uploaded by ${attachment.uploaded_by_name}`} /></a><figcaption>{attachment.uploaded_by_name} · {formatDate(attachment.created_at)}</figcaption></figure>)}</div> : <p className="muted-copy">No photos were attached.</p>}</section>
       <section className="detail-section"><h3>Record history</h3>{issue.events?.length ? <ol className="timeline">{issue.events.map((event) => <li key={event.id}><span className="timeline-dot" aria-hidden="true" /><div><strong>{event.from_status ? `${statusLabels[event.from_status]} → ${statusLabels[event.to_status]}` : `Issue ${statusLabels[event.to_status].toLowerCase()}`}</strong><p>{event.note || 'Status updated'}{event.actor_name ? ` · ${event.actor_name}` : ''}</p><time dateTime={event.created_at}>{formatDate(event.created_at)}</time></div></li>)}</ol> : <p className="muted-copy">No history events are recorded.</p>}</section>
+      {networkReaderRoles.has(user.role) && <IssueNetworkEvidence issueId={issue.id} />}
+      <IssueWorkOrdersSection issueId={issue.id} assignedTeam={issue.assigned_team} user={user} />
     </div>
     <aside className="detail-aside" aria-label="Issue information"><h3>Issue information</h3><Info label="Category" value={issue.category.name} /><Info label="Location" value={issue.location_name} /><Info label="Priority" value={priorityLabels[issue.priority]} /><Info label="Related asset" value={issue.asset_name ?? 'None'} /><Info label="Reported by" value={issue.reporter_name ?? (issue.reporter === user.id ? 'You' : 'Not available')} />{canSeeOperations(user.role) && <><Info label="Assigned team" value={issue.assigned_team_name ?? 'Not assigned'} /><Info label="Assigned to" value={issue.assigned_to_name ?? 'Not assigned'} /><SlaPanel issue={issue} />{issue.assignment_history?.length ? <section className="assignment-history"><h4>Assignment history</h4>{issue.assignment_history.map((item, index) => <p key={`${item.created_at}-${index}`}><strong>{item.team ?? 'Unassigned'}</strong> · {item.reason}{item.rule ? ` · Rule: ${item.rule}` : ''}</p>)}</section> : null}{(user.role === 'SUPERVISOR' || managers.has(user.role)) && <AssignmentForm issue={issue} />}</>}<Info label="Created" value={formatDate(issue.created_at)} /><Info label="Updated" value={formatDate(issue.updated_at)} />{issue.resolved_at && <Info label="Resolved" value={formatDate(issue.resolved_at)} />}{issue.closed_at && <Info label="Closed" value={formatDate(issue.closed_at)} />}</aside>
   </section>
@@ -192,7 +222,60 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 function canSeeOperations(role: AuthUser['role']) {
-  return role === 'TECHNICIAN' || role === 'SUPERVISOR' || managers.has(role)
+  return role === 'TECHNICIAN' || role === 'SUPERVISOR' || issueManagementRoles.has(role)
+}
+
+function NetworkEvidenceSummary({ evaluation }: { evaluation: NetworkQualityEvaluation }) {
+  const { measurement } = evaluation
+  const readings = evaluation.metrics.filter((metric) => metric.key !== 'CONNECTION_STATUS' && metric.value !== null)
+  return <section className="panel network-evidence-summary" aria-label="Supporting network evidence">
+    <h3>Network finding · supporting evidence</h3>
+    <dl className="network-detail-grid">
+      <div><dt>Network</dt><dd>{measurement.network_name}</dd></div>
+      <div><dt>Device</dt><dd>{measurement.device_code ?? measurement.device_name ?? 'Not specified'}</dd></div>
+      <div><dt>Location</dt><dd>{measurement.location_name}</dd></div>
+      <div><dt>Quality</dt><dd>{evaluation.overall_label}</dd></div>
+      <div><dt>Primary factor</dt><dd>{evaluation.primary_factor_label ?? 'Not determined'}</dd></div>
+      <div><dt>Measured</dt><dd>{new Date(measurement.measured_at).toLocaleString()}</dd></div>
+      <div><dt>Evaluator</dt><dd>{evaluation.evaluation_version}</dd></div>
+      <div><dt>Readings</dt><dd>{readings.length ? readings.map((metric) => `${metric.label}: ${metric.value}${metric.unit ? ` ${metric.unit}` : ''}`).join(' · ') : 'No numeric readings recorded'}</dd></div>
+    </dl>
+    <p className="muted-copy">This finding is supporting evidence; the campus issue remains the operational record.</p>
+  </section>
+}
+
+function IssueNetworkEvidence({ issueId }: { issueId: number }) {
+  const contexts = useQuery({
+    queryKey: ['issue-network-context', issueId],
+    queryFn: () => apiRequest<Paginated<IssueNetworkContext>>(`/issues/${issueId}/network-context/`),
+  })
+  return <section className="detail-section" aria-labelledby="network-context-title">
+    <h3 id="network-context-title">Network context</h3>
+    {contexts.isPending ? <Loading label="Loading network evidence" />
+      : contexts.isError ? <ErrorState title="Network context is unavailable" detail={contexts.error instanceof ApiError && contexts.error.status === 403 ? 'Your role cannot view linked network measurements.' : 'The issue or supporting measurement may no longer be accessible.'} onRetry={() => { void contexts.refetch() }} />
+        : contexts.data.count === 0 ? <p className="muted-copy">No network measurements are attached to this issue.</p>
+          : <div className="network-context-list">{contexts.data.results.map((context) => <article className="panel network-context-item" key={context.id}>
+            <p>This network measurement is supporting evidence for this issue.</p>
+            <dl className="network-detail-grid">
+              <div><dt>Network</dt><dd>{context.network_name}</dd></div>
+              <div><dt>Device</dt><dd>{context.device_code ?? context.device_name ?? 'Not specified'}</dd></div>
+              <div><dt>Location</dt><dd>{context.location_name}</dd></div>
+              <div><dt>Measured</dt><dd>{formatDate(context.measured_at)}</dd></div>
+              <div><dt>Quality</dt><dd>{context.overall_quality.replace(/_/g, ' ')}</dd></div>
+              <div><dt>Primary factor</dt><dd>{context.primary_factor ? context.primary_factor.replace(/_/g, ' ') : 'Not determined'}</dd></div>
+              <div><dt>Evaluator snapshot</dt><dd>{context.evaluator_version}</dd></div>
+              <div><dt>Readings</dt><dd>{[
+                context.latency_ms !== null ? `Latency ${context.latency_ms} ms` : null,
+                context.packet_loss_percent !== null ? `Packet loss ${context.packet_loss_percent}%` : null,
+                context.download_mbps !== null ? `Download ${context.download_mbps} Mbps` : null,
+                context.upload_mbps !== null ? `Upload ${context.upload_mbps} Mbps` : null,
+                context.signal_strength_dbm !== null ? `Signal ${context.signal_strength_dbm} dBm` : null,
+                `Connection ${context.connection_state.toLowerCase()}`,
+              ].filter(Boolean).join(' · ')}</dd></div>
+            </dl>
+            <Link className="text-link" to={`/network/measurements/${context.measurement_id}`}>Open original measurement and evaluation</Link>
+          </article>)}</div>}
+  </section>
 }
 
 function SlaPanel({ issue }: { issue: IssueRecord }) {
@@ -205,6 +288,7 @@ function AssignmentForm({ issue }: { issue: IssueRecord }) {
   const teams = useQuery({ queryKey: ['teams'], queryFn: () => apiRequest<Paginated<{ id: number; name: string; is_active: boolean }>>('/teams/') })
   const mutation = useMutation({ mutationFn: (body: { team: number; reason: string }) => apiRequest(`/issues/${issue.id}/assign/`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: () => { void cache.invalidateQueries({ queryKey: ['issue', String(issue.id)] }); void cache.invalidateQueries({ queryKey: ['issues'] }) } })
   function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); mutation.mutate({ team: Number(data.get('team')), reason: String(data.get('reason')) }) }
-  if (teams.isPending || teams.isError) return null
+  if (teams.isPending) return <Loading label="Loading teams for assignment" />
+  if (teams.isError) return <ErrorState title="Teams could not be loaded" detail={friendlyError(teams.error)} onRetry={() => { void teams.refetch() }} />
   return <form className="assignment-form" onSubmit={submit}><h4>Reassign team</h4><label>Team<Select name="team" defaultValue={issue.assigned_team ?? ''} required><option value="">Select team</option>{(teams.data.results ?? []).filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select></label><label>Reason<Input name="reason" minLength={3} maxLength={500} required /></label>{mutation.isError && <p className="form-error" role="alert">{friendlyError(mutation.error)}</p>}{mutation.isSuccess && <p role="status">Assignment updated.</p>}<Button variant="primary" type="submit" disabled={mutation.isPending}>{mutation.isPending ? 'Assigning…' : 'Assign team'}</Button></form>
 }
