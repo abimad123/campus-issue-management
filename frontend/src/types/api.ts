@@ -92,6 +92,16 @@ export interface IssueRecord {
   updated_at: string
   resolved_at: string | null
   closed_at: string | null
+  sla_state?: 'ON_TRACK' | 'AT_RISK' | 'BREACHED' | 'COMPLETED' | 'NOT_CONFIGURED' | null
+  response_sla_state?: string | null
+  resolution_sla_state?: string | null
+  response_due_at?: string | null
+  resolution_due_at?: string | null
+  sla_policy_name?: string | null
+  response_breached_at?: string | null
+  resolution_breached_at?: string | null
+  current_escalation_level?: number | null
+  assignment_history?: { team: string | null; user: string | null; reason: string; automatic: boolean; rule: string | null; created_at: string }[]
   attachments?: IssueAttachment[]
   events?: IssueEvent[]
 }

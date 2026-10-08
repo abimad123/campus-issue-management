@@ -1,8 +1,8 @@
 import qrcode
 from django.http import HttpResponse
-from django.urls import path
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -14,6 +14,8 @@ from .serializers import AssetSerializer
 
 class AssetViewSet(viewsets.ModelViewSet):
     serializer_class = AssetSerializer
+    filter_backends = [SearchFilter]
+    search_fields = ["asset_code", "name", "asset_type", "location__name", "location__building__name"]
 
     def get_permissions(self):
         if self.request.method in ("GET", "HEAD", "OPTIONS"):

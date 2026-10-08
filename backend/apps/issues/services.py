@@ -35,14 +35,24 @@ def transition_issue(issue, *, new_status, actor, note=""):
         raise ValidationError({"status": f"Cannot change an issue from {issue.status} to {new_status}."})
 
     old_status = issue.status
+    now = timezone.now()
     issue.status = new_status
+    if new_status == Issue.Status.IN_PROGRESS and issue.response_at is None:
+        issue.response_at = now
     if new_status == Issue.Status.RESOLVED:
-        issue.resolved_at = timezone.now()
+        issue.resolved_at = now
     elif new_status == Issue.Status.REOPENED:
         issue.resolved_at = None
         issue.closed_at = None
     elif new_status == Issue.Status.CLOSED:
         issue.closed_at = timezone.now()
-    issue.save(update_fields=["status", "resolved_at", "closed_at", "updated_at"])
+    issue.save(update_fields=["status", "response_at", "resolved_at", "closed_at", "updated_at"])
     IssueEvent.objects.create(issue=issue, actor=actor, from_status=old_status, to_status=new_status, note=note)
+    from apps.sla.services import record_sla_response, record_sla_resolution
+    if new_status == Issue.Status.IN_PROGRESS:
+        record_sla_response(issue, now)
+    elif new_status == Issue.Status.RESOLVED:
+        record_sla_resolution(issue, now)
+    from apps.audit.services import record_audit
+    record_audit("issue.status_changed", actor=actor, entity=issue, context={"from": old_status, "to": new_status})
     return issue

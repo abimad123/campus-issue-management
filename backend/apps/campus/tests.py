@@ -9,7 +9,7 @@ from .models import Building, Campus, Location
 
 class CampusApiTests(APITestCase):
     def setUp(self):
-        self.student = User.objects.create_user("campus-reader@example.test", "Campus Reader", "test-password", role=UserRole.STUDENT)
+        self.student = User.objects.create_user("campus-reader@example.test", "Campus Reader", "test-password", role=UserRole.STAFF)
         self.campus = Campus.objects.create(name="Development Campus", code="dev-campus")
         self.building = Building.objects.create(campus=self.campus, name="Academic Block", code="academic")
         self.location = Location.objects.create(building=self.building, name="Classroom 1", kind=Location.Kind.CLASSROOM)

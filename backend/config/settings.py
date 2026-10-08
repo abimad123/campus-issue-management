@@ -41,7 +41,7 @@ ASGI_APPLICATION = "config.asgi.application"
 DATABASES = {"default": {
     "ENGINE": "django.db.backends.postgresql", "NAME": env("POSTGRES_DB", default="lpu_campus"),
     "USER": env("POSTGRES_USER", default="lpu_app"), "PASSWORD": env("POSTGRES_PASSWORD", default=""),
-    "HOST": env("POSTGRES_HOST", default="localhost"), "PORT": env("POSTGRES_PORT", default="5432"),
+    "HOST": env("POSTGRES_HOST", default="postgres"), "PORT": env("POSTGRES_PORT", default="5432"),
     "CONN_MAX_AGE": 60,
 }}
 
@@ -54,6 +54,14 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 12}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+FILE_UPLOAD_PERMISSIONS = 0o640
+FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o750
 CORS_ALLOWED_ORIGINS = env.list("DJANGO_CORS_ALLOWED_ORIGINS", default=["http://localhost:5173"])
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=["http://localhost:5173"])
@@ -72,5 +80,11 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "DEFAULT_AUTHENTICATION_CLASSES": ["apps.users.authentication.SPAAuthSessionAuthentication"],
 }
-CELERY_BROKER_URL = env("REDIS_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = env("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_BROKER_URL = env("REDIS_URL", default="redis://redis:6379/0")
+CELERY_RESULT_BACKEND = env("REDIS_URL", default="redis://redis:6379/0")
+CELERY_BEAT_SCHEDULE = {
+    "process-issue-slas-every-minute": {
+        "task": "apps.sla.tasks.process_sla_sweep",
+        "schedule": 60.0,
+    },
+}

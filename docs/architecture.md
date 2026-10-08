@@ -1,52 +1,72 @@
 # Architecture
 
-## Phase 1 boundary
+## Current phase
 
-The repository separates a React single-page application, a Django REST API, and PostgreSQL-backed services. This phase establishes configuration and route boundaries only. No operational domain models, authentication flow, fake records, or analytics are included. `/api/health/` is a liveness endpoint, not a dependency-readiness check.
+The repository has a React single-page application, a Django REST API, and PostgreSQL as the configured application database. The current phase implements identity, reference data, issue intake, configurable routing, persisted SLA deadlines, a bounded Celery Beat sweep, internal notifications, and audit history. Work orders, duplicate detection, feedback, network measurements, and analytics remain later work; inactive screens are labelled honestly.
 
 ## Frontend
 
-`frontend/src/App.tsx` owns the application shell and page routes. Shared visual primitives live in `components/ui.tsx`; API transport starts in `lib/api.ts`. React Router handles page navigation and TanStack Query is configured at the application root for server state. The shell is responsive and provides intentional empty states until APIs return real records. Tailwind is configured for utility styling; the current shell also uses a small CSS layer for layout and responsive behavior.
+`frontend/src/App.tsx` owns authenticated routing, role-aware navigation, sign-out, and the application shell. `features/auth` handles sign-in; `features/issues` contains issue list, intake, detail, dashboard summary, assignment and status update screens; `features/admin` contains the routing-rule and SLA-policy forms; `features/assets` reads the asset register. UI primitives are in `components/ui.tsx`, shared API calls and CSRF handling are in `lib/api.ts`, and API response contracts are in `types/api.ts`.
 
-The requested routes are present: `/dashboard`, `/issues`, `/issues/:id`, `/work-orders`, `/network`, `/network/coverage`, `/assets`, `/analytics`, `/reports`, and `/admin`.
+TanStack Query owns API data fetching and cache invalidation. React Router provides `/login`, `/dashboard`, `/issues`, `/issues/new`, `/issues/:id`, `/profile`, `/assets`, `/admin/routing-rules`, `/admin/sla-policies`, and explicitly inactive future module routes. The issue list uses database-backed filters and page-number pagination. The issue form loads category, location, and asset options from APIs and accepts one optional image.
 
-## Backend
+## Identity and permissions
 
-`backend/config` contains environment-driven settings, root URLs, ASGI/WSGI entry points, and Celery setup. `apps.core` owns cross-cutting liveness and infrastructure smoke-task endpoints. The following Django apps are registered as domain boundaries; they currently contain no models or workflow logic:
+`users.User` is the custom email-based user model and is configured before the first database migration. Email is normalized to lowercase. Passwords use Django’s password hashing and validators. Browser authentication uses Django sessions with `HttpOnly`, `SameSite=Lax` cookies and CSRF tokens on unsafe requests. Session and CSRF cookies are marked secure when `DJANGO_DEBUG=false`; production must use HTTPS.
 
-| App | Future ownership |
+Roles are `STUDENT`, `STAFF`, `TECHNICIAN`, `SUPERVISOR`, `FACILITY_MANAGER`, `IT_MANAGER`, `DEPARTMENT_HEAD`, `CAMPUS_ADMIN`, and `SYSTEM_ADMIN`. Frontend navigation reflects these roles, but all access restrictions are enforced in API permission classes and querysets:
+
+- Students and staff can submit and view their own issues.
+- Technicians can view issues assigned to them and update permitted status transitions.
+- Supervisors can view and update issues assigned to one of their teams.
+- Facility and IT managers, department heads, campus administrators, and system administrators have broader issue visibility.
+- Campus and system administrators can modify campus reference data, issue categories, and assets.
+- Django Admin access requires a staff account; seeded system administrator is a superuser for local development.
+
+No public registration endpoint exists. Create initial operators through `createsuperuser` or the explicitly synthetic development seed command.
+
+## Backend app ownership
+
+| Django app | Current ownership |
 | --- | --- |
-| `users` | User profiles, teams, roles, authentication integration |
-| `campus` | Campus zones, buildings, rooms, and locations |
-| `issues` | Issue intake, categories, lifecycle, and validation |
-| `routing` | Data-configured assignment rules |
-| `sla` | Policies, deadlines, breach events, and escalation |
-| `workorders` | Technician assignments and work completion |
-| `assets` | Asset inventory and asset relationships |
-| `feedback` | Satisfaction and reopening records |
-| `network` | Test measurements and coverage zones |
-| `analytics` | Query-backed operational summaries |
-| `notifications` | User-facing notification delivery and records |
-| `audit` | Administrative and sensitive-action audit events |
+| `users` | Custom identity model, role definitions, email/password login, session lifecycle, API role checks |
+| `campus` | Campus, Building, Location, Department, Team and team membership |
+| `issues` | IssueCategory, Issue, image attachments, actual status events, list filters and visibility |
+| `assets` | Asset inventory, UUID QR identity, QR image response |
+| `core` | Health/liveness endpoint and infrastructure smoke task |
+| `routing` | Data-driven routing rules, assignment history, deterministic matching and controlled reassignment |
+| `sla` | SLA policies, escalation ladder, SLA events, policy selection and bounded periodic processing |
+| `workorders` | Future work assignment and completion boundary |
+| `feedback` | Future satisfaction and reopening feedback boundary |
+| `network` | Future measurements and coverage boundary |
+| `analytics` | Future database-backed operational summaries |
+| `notifications` | Internal per-recipient notification inbox and read state |
+| `audit` | Append-only administrative and operational audit records |
 
-Domain models should be introduced alongside the behavior that uses them, with relational constraints and deliberate indexes. Avoid prematurely modeling speculative workflows.
+Domain models live in the app that owns their lifecycle. Cross-domain references use foreign keys, migrations, and explicit `on_delete` behavior. PostgreSQL indexes cover issue status, priority, category, reporter, and operational assignment lookups. Django REST Framework uses `django-filter` and page-number pagination.
 
-## Data direction
+## Campus and issue data direction
 
-PostgreSQL is the sole configured database. Environment variables provide connection details and secrets. Expected entities as the system grows include User, Team, Issue, IssueCategory, Location, Asset, RoutingRule, Assignment, SlaPolicy, SlaEvent, WorkOrder, Resolution, Feedback, NetworkTest, CoverageZone, Notification, and AuditEntry. Add migrations with each schema change. Keep development seed data separate from production records.
+The campus structure is `Campus → Building → Location`; a Location may have a parent Location for smaller subareas and may omit a Building for outdoor areas. Departments own optional Teams; a user may belong to multiple teams. Assets reference a Location. Issues reference a reporter, category, Location, optional Asset, optional assigned user/team, controlled priority, and controlled status. IssueEvent stores real creation and status-change events; the UI does not synthesize activity history.
 
-## API direction
+Issue attachments are restricted to JPEG, PNG, and WebP images, at most 5 MB and 20 megapixels. Files are stored under `MEDIA_ROOT`, but no public media URL is configured. The API streams files through an authenticated view that checks visibility of the parent issue and sends `nosniff` and private cache headers. Asset QR responses contain the asset’s opaque UUID identifier, not a database password or other secret.
 
-The API is rooted at `/api/` and uses Django REST Framework. `/api/health/` currently returns a small liveness response. Future resource endpoints should use REST conventions, serializers for validation, consistent error responses, pagination for collections, and backend permission checks for every protected operation. The frontend API helper centralizes the base URL and fetch behavior.
+## API conventions
 
-## Background work
+The API root is `/api/`. Serializers validate input and control role-sensitive output; protected views use session authentication and explicit permission classes. Issue lists are scoped before filters are applied, preventing students from retrieving another reporter’s issues by changing query parameters. Issue status changes go through a service that validates the lifecycle and writes an IssueEvent in one database transaction. Issue updates and deletion are not exposed as general CRUD endpoints.
 
-Celery uses Redis for broker and result backend. Worker and Beat services are defined in Compose. A small `debug_task` confirms task discovery and connectivity. No periodic task is scheduled yet. Future SLA processing should use durable timestamps and periodic bounded sweeps rather than one scheduled job per issue.
+Authentication endpoints are `/api/auth/login/`, `/api/auth/logout/`, and `/api/auth/me/`; `/api/auth/csrf/` initializes the CSRF cookie. Reference endpoints cover campuses, buildings, locations, departments, teams, issue categories, and assets. Issue endpoints support list, create, detail, assignment, scoped `/status/`, and role-scoped `/summary/`. Admin-only APIs manage routing rules and SLA policies. Notifications are user-scoped and attachments use a separate authorized file endpoint.
 
-## Authentication direction
+## Seed data and development
 
-Authentication is not implemented in Phase 1. When introduced, choose the session/token approach based on the deployment and browser threat model; use Django password hashing and enforce role and object-level permissions in the API. Frontend navigation visibility is not an authorization boundary. Keep secrets outside source control and configure production security separately from development defaults.
+`python manage.py seed_development` creates a small, idempotent, synthetic dataset using `.test` emails and invented campus records. It asks for a local password shared by those accounts. It never inserts sample issue volume or claims that the fictional records are official LPU infrastructure.
 
-## Development services
+Automated tests use `config.test_settings` with an in-memory SQLite database, avoiding a running PostgreSQL service. PostgreSQL remains the configured real application database and must be used for local integration and deployment verification. Docker Compose defines the services but requires an available Docker engine.
 
-`compose.yaml` defines PostgreSQL, Redis, Django, React/Vite, Celery Worker, and Celery Beat. PostgreSQL and Redis have health checks, and application services use Compose service names for internal connections. Bind mounts support local editing; named volumes preserve database and node dependency state.
+## Routing and SLA workflow
+
+Routing and SLA services are database driven and documented in [routing-and-sla.md](routing-and-sla.md). Issue submission calls the services within the database transaction; deadlines are persisted on `Issue`. A Celery Beat sweep, not individual scheduled tasks, handles warnings, breaches and escalation. Routing and policy matching precedence is documented there.
+
+## Later modules
+
+Work orders, duplicate detection, feedback, network measurement, maps, analytics, and prediction remain future scope. When implemented, derive analytics from persisted records and retain the current backend permission boundary.

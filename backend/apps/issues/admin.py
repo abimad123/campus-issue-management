@@ -28,7 +28,6 @@ class IssueAdmin(admin.ModelAdmin):
     list_display = ("ticket_number", "title", "category", "priority", "status", "reporter", "created_at")
     list_filter = ("status", "priority", "category", "location__building", "created_at")
     search_fields = ("ticket_number", "title", "description", "reporter__email", "reporter__full_name")
-    readonly_fields = ("ticket_number", "created_at", "updated_at", "resolved_at", "closed_at")
+    readonly_fields = ("ticket_number", "status", "created_at", "updated_at", "resolved_at", "closed_at")
     list_select_related = ("category", "location", "reporter", "assigned_team", "assigned_to")
     inlines = (IssueAttachmentInline, IssueEventInline)
-

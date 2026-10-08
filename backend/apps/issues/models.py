@@ -53,6 +53,15 @@ class Issue(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
+    response_at = models.DateTimeField(null=True, blank=True)
+    sla_policy = models.ForeignKey("sla.SlaPolicy", null=True, blank=True, on_delete=models.SET_NULL, related_name="issues")
+    response_due_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    resolution_due_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    response_breached_at = models.DateTimeField(null=True, blank=True)
+    resolution_breached_at = models.DateTimeField(null=True, blank=True)
+    current_escalation_level = models.PositiveSmallIntegerField(default=0)
+    escalation_started_at = models.DateTimeField(null=True, blank=True)
+    next_escalation_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         ordering = ["-created_at", "-pk"]

@@ -1,4 +1,5 @@
 from rest_framework import viewsets
+from rest_framework.filters import SearchFilter
 
 from apps.users.permissions import IsCampusAdministrator
 
@@ -30,6 +31,8 @@ class BuildingViewSet(ReadOrCampusAdmin):
 
 class LocationViewSet(ReadOrCampusAdmin):
     serializer_class = LocationSerializer
+    filter_backends = [SearchFilter]
+    search_fields = ["name", "code", "building__name", "building__campus__name"]
 
     def get_queryset(self):
         return Location.objects.filter(is_active=True).select_related("building__campus", "parent")

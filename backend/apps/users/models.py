@@ -32,5 +32,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.full_name
 
+    def save(self, *args, **kwargs):
+        self.email = self.__class__.objects.normalize_email(self.email).lower()
+        super().save(*args, **kwargs)
+
     class Meta:
         ordering = ["full_name", "email"]

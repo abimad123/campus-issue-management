@@ -62,6 +62,7 @@ class IssueApiTests(APITestCase):
         other_detail = self.client.get(reverse("issue-detail", args=[issue.pk]))
         self.assertEqual(other_detail.status_code, 404)
         self.assertEqual(self.client.get(reverse("issue-list")).data["count"], 0)
+        self.assertEqual(self.client.patch(reverse("issue-detail", args=[issue.pk]), {"title": "Changed"}, format="json").status_code, 403)
 
     def test_create_validation_and_category_location_asset_apis(self):
         invalid = self.client.post(reverse("issue-list"), {**self.payload(), "description": "short"}, format="json")
@@ -83,7 +84,15 @@ class IssueApiTests(APITestCase):
             valid = self.client.post(reverse("issue-list"), {**self.payload(), "photo": png_upload()}, format="multipart")
             self.assertEqual(valid.status_code, 201, valid.data)
             issue = Issue.objects.get(pk=valid.data["id"])
-            self.assertEqual(issue.attachments.get().content_type, "image/png")
+            attachment = issue.attachments.get()
+            self.assertEqual(attachment.content_type, "image/png")
+            file_response = self.client.get(reverse("issue-attachment-file", args=[attachment.pk]))
+            self.assertEqual(file_response.status_code, 200)
+            self.assertEqual(file_response["X-Content-Type-Options"], "nosniff")
+            file_response.close()
+            self.client.force_authenticate(self.other_student)
+            self.assertEqual(self.client.get(reverse("issue-attachment-file", args=[attachment.pk])).status_code, 404)
+            self.client.force_authenticate(self.student)
 
             bad_file = SimpleUploadedFile("script.exe", b"not an image", content_type="application/octet-stream")
             invalid = self.client.post(reverse("issue-list"), {**self.payload(), "photo": bad_file}, format="multipart")

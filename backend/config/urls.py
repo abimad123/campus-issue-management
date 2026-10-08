@@ -8,4 +8,7 @@ urlpatterns = [
     path("api/", include("apps.campus.urls")),
     path("api/", include("apps.assets.urls")),
     path("api/", include("apps.issues.urls")),
+    path("api/", include("apps.routing.urls")),
+    path("api/", include("apps.sla.urls")),
+    path("api/", include("apps.notifications.urls")),
 ]

@@ -50,11 +50,16 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   if (!response.ok) {
     let message = `Request failed (${response.status}).`
     try {
-      const payload = await response.json() as { detail?: string }
-      if (payload.detail) message = payload.detail
+      const payload = await response.json() as { detail?: string } | Record<string, unknown>
+      if ('detail' in payload && typeof payload.detail === 'string') message = payload.detail
+      else {
+        const firstError = Object.values(payload).flatMap((value) => Array.isArray(value) ? value : [value]).find((value) => typeof value === 'string')
+        if (typeof firstError === 'string') message = firstError
+      }
     } catch {
       // Keep the status based message when the server has no JSON error body.
     }
+    if (response.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('campus:session-expired'))
     throw new ApiError(response.status, message)
   }
   if (response.status === 204) return undefined as T
