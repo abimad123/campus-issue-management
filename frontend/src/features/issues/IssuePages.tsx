@@ -87,6 +87,7 @@ export function IssueListPage({ user }: { user: AuthUser }) {
 
 export function IssueCreatePage() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const networkMeasurementId = searchParams.get('network_measurement')
   const [title, setTitle] = useState('')
@@ -99,6 +100,7 @@ export function IssueCreatePage() {
   const [description, setDescription] = useState('')
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
+  const [submittedIssue, setSubmittedIssue] = useState<IssueRecord | null>(null)
   const deferredLocationSearch = useDeferredValue(locationSearch)
   const deferredAssetSearch = useDeferredValue(assetSearch)
   const networkEvidenceQuery = useQuery({
@@ -113,7 +115,11 @@ export function IssueCreatePage() {
     mutationFn: (formData: FormData) => apiRequest<IssueRecord>(networkMeasurementId
       ? `/network-measurements/${networkMeasurementId}/create-issue/`
       : '/issues/', { method: 'POST', body: formData }),
-    onSuccess: (issue) => navigate(`/issues/${issue.id}`, { replace: true }),
+    onSuccess: (issue) => {
+      setSubmittedIssue(issue)
+      void queryClient.invalidateQueries({ queryKey: ['issues'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-issues'] })
+    },
   })
 
   useEffect(() => {
@@ -151,6 +157,29 @@ export function IssueCreatePage() {
 
   const optionsPending = categoriesQuery.isPending || locationsQuery.isPending || assetsQuery.isPending || Boolean(networkMeasurementId && networkEvidenceQuery.isPending)
   const optionsError = categoriesQuery.error ?? locationsQuery.error ?? assetsQuery.error ?? networkEvidenceQuery.error
+  if (submittedIssue) {
+    const nextStep = submittedIssue.assigned_team_name
+      ? `The ${submittedIssue.assigned_team_name} team will review the request.`
+      : 'The operations team will review and route the request.'
+    return <section className="submission-layout" aria-labelledby="submission-title">
+      <div className="submission-card" aria-live="polite">
+        <p className="eyebrow">CAMPUS SERVICE REQUEST</p>
+        <h2 id="submission-title">Your issue has been submitted</h2>
+        <p className="submission-success" role="status">Submission successful. Keep this reference number for follow-up.</p>
+        <div className="submission-reference"><span>Ticket reference</span><strong>{submittedIssue.ticket_number}</strong></div>
+        <dl className="submission-details">
+          <div><dt>Issue</dt><dd>{submittedIssue.title}</dd></div>
+          <div><dt>Location</dt><dd>{submittedIssue.location_name}</dd></div>
+          <div><dt>Current status</dt><dd><Badge tone={statusTones[submittedIssue.status]}>{statusLabels[submittedIssue.status]}</Badge></dd></div>
+        </dl>
+        <p className="submission-next-step">{nextStep} You can see issues currently available to your account in the issue list.</p>
+        <div className="form-actions">
+          <Link className="button" to="/issues">Go to issue list</Link>
+          <Link className="button button--primary" to="/dashboard">Go to dashboard</Link>
+        </div>
+      </div>
+    </section>
+  }
   return <section className="report-layout" aria-labelledby="report-title">
     <div className="report-intro"><div className="eyebrow">CAMPUS SERVICE REQUEST</div><h2 id="report-title">Tell us what needs attention</h2><p>Share the location and a short description. The operations team can follow up from your report.</p><div className="privacy-note"><span aria-hidden="true">i</span><p>Your report is linked to your account so you can track its status.</p></div>{networkMeasurementId && networkEvidenceQuery.data && <NetworkEvidenceSummary evaluation={networkEvidenceQuery.data} />}</div>
     {optionsPending ? <div className="state-panel"><Loading label="Loading categories and campus locations" /></div>

@@ -21,15 +21,15 @@ The intended hierarchy is `Campus → Building → Location`. Teams do not imply
 - **IssueAttachment** — one validated image file associated with an Issue and uploader, with server-detected content type and timestamp.
 - **IssueEvent** — actual creation or status transition, with prior/current status, optional actor and note, and timestamp. It is the activity-history source; arbitrary activity events are not generated.
 
-Priority values are `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`. Lifecycle states are `OPEN`, `IN_REVIEW`, `ASSIGNED`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`, and `REOPENED`. The current transition graph is deliberately small and enforced by a domain service. The optional assignment references support visibility policy only; automatic routing and assignment management are not implemented.
+Priority values are `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`. Lifecycle states are `OPEN`, `IN_REVIEW`, `ASSIGNED`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`, and `REOPENED`. The transition graph is enforced by a domain service that locks and reloads the issue before validating a transition. Active data-driven routing rules match category, location, and priority when an issue is submitted; the selected team/member and every automatic or manual outcome are retained in `Assignment` history. If no rule matches, the issue remains unassigned. Campus/system administrators can manually assign or reassign any active team; supervisors can assign only within their own teams. Reopening retains the original SLA policy, deadlines, breach timestamps, and escalation history.
 
 ## Visibility rules
 
 | Role group | Issue visibility | Status changes |
 | --- | --- | --- |
 | Student, Staff | Their own reports | None |
-| Technician | Issues assigned to them | Allowed transitions on assigned issues |
-| Supervisor | Issues assigned to a team they belong to | Allowed transitions on those team issues |
+| Technician | Issues assigned directly to them | Allowed non-terminal transitions on assigned issues; resolving/closing/reopening is denied and resolution must follow work-order verification |
+| Supervisor | Issues assigned to a team they belong to, plus unassigned issues for review | Allowed transitions only on issues assigned to one of their teams; unassigned rows are read-only until assigned |
 | Facility Manager, IT Manager, Department Head, Campus Admin, System Admin | All issues | Allowed lifecycle transitions |
 
 Visibility is applied to the queryset before filtering and pagination. Attachment retrieval applies the same issue visibility and does not publish uploaded files through a public media route.

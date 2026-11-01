@@ -22,6 +22,12 @@ Celery Beat schedules `apps.sla.tasks.process_sla_sweep` every 60 seconds. It se
 
 `AuditEntry` stores actor, action, entity identity, timestamp, and non-secret context for configuration changes, assignments, status changes, breaches, and escalations.
 
+## Reopening and the original SLA timeline
+
+Reopening an issue continues its original SLA lifecycle. The original policy and response/resolution deadlines are not restarted or extended. Historical breach timestamps, breach events, escalation level, and escalation schedule remain attached to the issue. The periodic sweep includes reopened issues: it resumes pending resolution deadline checks and escalation processing against the persisted timestamps, while unique SLA event constraints, breach timestamps, and notification idempotency prevent duplicate breach records. A response SLA already satisfied by `response_at` is not reconsidered after reopening; an unresolved response may still breach against its original deadline. A new resolution cycle or separate SLA clock is not created.
+
+Issue transitions reload and lock the issue row inside a transaction before checking current assignment, status, and transition validity. This prevents two concurrent transitions from both succeeding based on stale state.
+
 ## APIs
 
 - `GET/POST /api/admin/routing-rules/`, `GET/PATCH/DELETE /api/admin/routing-rules/{id}/`

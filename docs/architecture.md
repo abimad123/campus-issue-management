@@ -18,7 +18,7 @@ Roles are `STUDENT`, `STAFF`, `TECHNICIAN`, `SUPERVISOR`, `FACILITY_MANAGER`, `I
 
 - Students and staff can submit and view their own issues.
 - Technicians can view issues assigned to them and update permitted status transitions.
-- Supervisors can view and update issues assigned to one of their teams.
+- Supervisors can review unassigned issues and can view/update issues assigned to one of their teams. They cannot transition an unassigned issue until assigning it to a team in their scope.
 - Facility and IT managers, department heads, campus administrators, and system administrators have broader issue visibility.
 - Campus and system administrators can modify campus reference data, issue categories, and assets.
 - Technicians, supervisors, IT managers, and campus/system administrators can view network operations records; only IT managers and campus/system administrators can change network inventory. Raw measurements are append-only and record their authenticated submitter.
@@ -54,7 +54,7 @@ Issue and work-order evidence attachments are restricted to JPEG, PNG, and WebP 
 
 ## API conventions
 
-The API root is `/api/`. Serializers validate input and control role-sensitive output; protected views use session authentication and explicit permission classes. Issue lists are scoped before filters are applied, preventing students from retrieving another reporter’s issues by changing query parameters. Issue status changes go through a service that validates the lifecycle and writes an IssueEvent in one database transaction. Issue updates and deletion are not exposed as general CRUD endpoints.
+The API root is `/api/`. Serializers validate input and control role-sensitive output; protected views use session authentication and explicit permission classes. Issue lists are scoped before filters are applied, preventing students from retrieving another reporter’s issues by changing query parameters. Issue status changes go through a service that locks and reloads the issue, validates the current lifecycle and assignment, and writes an IssueEvent in one database transaction. This serializes competing transitions against PostgreSQL row state. Issue updates and deletion are not exposed as general CRUD endpoints.
 
 Authentication endpoints are `/api/auth/login/`, `/api/auth/logout/`, and `/api/auth/me/`; `/api/auth/csrf/` initializes the CSRF cookie. Reference endpoints cover campuses, buildings, locations, departments, teams, issue categories, and assets. Issue endpoints support list, create, detail, assignment, scoped `/status/`, role-scoped `/summary/`, and network context read/attach. Network measurement endpoints support an explicit operator action to create an issue through the existing issue serializer and normal routing/SLA pipeline. `IssueNetworkContext` snapshots evaluator version, quality, and primary factor without copying raw readings, which remain on the source measurement. Network context APIs require network-reader access and the existing issue object permission. Work orders remain optional. Network Quality does not automatically create campus issues from threshold breaches. Work orders expose explicit assignment, accept, start, notes, material, evidence, completion, verification, rework, close, and cancel actions. Admin-only APIs manage routing rules and SLA policies. Notifications are user-scoped and attachments use separate authorized file endpoints.
 

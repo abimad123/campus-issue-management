@@ -1,12 +1,16 @@
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
+from django.db import close_old_connections, connection
 from django.test import override_settings
 from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image
 from rest_framework.test import APITransactionTestCase, APITestCase
+from rest_framework.exceptions import ValidationError
 
 from apps.assets.models import Asset
 from apps.campus.models import Building, Campus, Location, Team
@@ -190,3 +194,42 @@ class IssueAttachmentApiTests(IssueApiTestSetup, APITransactionTestCase):
             bad_file = SimpleUploadedFile("script.exe", b"not an image", content_type="application/octet-stream")
             invalid = self.client.post(reverse("issue-list"), {**self.payload(), "photo": bad_file}, format="multipart")
             self.assertEqual(invalid.status_code, 400)
+
+
+class IssueTransitionConcurrencyTests(IssueApiTestSetup, APITransactionTestCase):
+    def test_concurrent_status_transitions_validate_against_locked_current_state(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("Row-lock concurrency behavior is verified on PostgreSQL only.")
+        from apps.issues.services import transition_issue
+
+        issue = Issue.objects.create(
+            title="Concurrent transition verification",
+            description="Two operators attempt the same issue transition at the same time.",
+            category=self.category,
+            location=self.location,
+            reporter=self.student,
+            assigned_to=self.technician,
+            status=Issue.Status.ASSIGNED,
+        )
+        barrier = Barrier(2)
+
+        def attempt_transition():
+            close_old_connections()
+            try:
+                stale_issue = Issue.objects.get(pk=issue.pk)
+                barrier.wait(timeout=10)
+                try:
+                    transition_issue(stale_issue, new_status=Issue.Status.IN_PROGRESS, actor=self.technician)
+                    return "updated"
+                except ValidationError:
+                    return "rejected"
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(lambda _: attempt_transition(), range(2)))
+
+        self.assertCountEqual(outcomes, ["updated", "rejected"])
+        issue.refresh_from_db()
+        self.assertEqual(issue.status, Issue.Status.IN_PROGRESS)
+        self.assertEqual(issue.events.filter(to_status=Issue.Status.IN_PROGRESS).count(), 1)

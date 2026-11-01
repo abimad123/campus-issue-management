@@ -29,6 +29,10 @@ def can_change_issue_status(user, issue):
 
 @transaction.atomic
 def transition_issue(issue, *, new_status, actor, note=""):
+    # Refresh the caller's instance under a row lock so concurrent transitions
+    # validate against the latest committed status and assignment.
+    locked_issue = Issue.objects.select_for_update().get(pk=issue.pk)
+    issue.__dict__.update(locked_issue.__dict__)
     if not can_change_issue_status(actor, issue):
         raise PermissionDenied("You are not allowed to update this issue status.")
     if actor.role == UserRole.TECHNICIAN and new_status in {

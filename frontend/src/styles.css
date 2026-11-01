@@ -161,6 +161,18 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .photo-preview img { width: 90px; height: 72px; border: 1px solid #e4e7ec; border-radius: 5px; object-fit: cover; }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; border-top: 1px solid #eaecf0; }
 .form-error { padding: 10px 12px; border: 1px solid #f3c4c6; border-radius: 5px; background: #fff8f7; color: #922631; font-size: 11px; line-height: 1.5; }
+.submission-layout { display: grid; grid-template-columns: minmax(0, 720px); justify-content: center; }
+.submission-card { padding: 24px; border: 1px solid #d8e8df; border-radius: 7px; background: #fff; }
+.submission-card h2 { margin: 4px 0 8px; color: var(--color-ink); font-size: 20px; font-weight: 650; }
+.submission-success { margin: 0; color: #246944; font-size: 13px; }
+.submission-reference { display: grid; gap: 5px; margin: 20px 0 0; padding: 14px; border: 1px solid #dfe6ec; border-radius: 5px; background: #f8fafb; }
+.submission-reference span, .submission-details dt { color: var(--color-muted); font-size: 10px; font-weight: 600; }
+.submission-reference strong { color: var(--color-ink); font-size: 18px; letter-spacing: .03em; }
+.submission-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
+.submission-details div { min-width: 0; }
+.submission-details dd { margin: 5px 0 0; color: var(--color-ink); font-size: 12px; overflow-wrap: anywhere; }
+.submission-next-step { margin: 0; color: #475467; font-size: 12px; line-height: 1.6; }
+.submission-card .form-actions { justify-content: flex-start; margin-top: 20px; }
 .issue-detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; align-items: start; gap: 16px; }
 .detail-main, .detail-aside, .profile-card { border: 1px solid #e4e7ec; border-radius: 7px; background: #fff; }
 .detail-main { padding: 20px; }
@@ -590,4 +602,7 @@ body { color: var(--color-ink); background: var(--color-canvas); }
   .notification-row { flex-direction: column; gap: 12px; }
   .notification-row > .button { align-self: flex-start; }
   .notification-meta time { margin-left: 0; }
+  .submission-details { grid-template-columns: 1fr; gap: 10px; }
+  .submission-card { padding: 18px; }
+  .submission-card .form-actions { flex-wrap: wrap; }
 }

@@ -297,6 +297,11 @@ class NetworkApiTests(APITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         issue = Issue.objects.get(pk=response.data["id"])
         self.assertEqual(issue.reporter, self.tech)
+        self.assertEqual(response.data["ticket_number"], issue.ticket_number)
+        self.assertEqual(response.data["status"], issue.status)
+        self.assertEqual(response.data["title"], issue.title)
+        self.assertEqual(self.client.get(reverse("issue-detail", args=[issue.pk])).status_code, 404)
+        self.assertEqual(self.client.get(reverse("issue-list")).data["count"], 0)
         self.assertTrue(IssueNetworkContext.objects.filter(issue=issue, network_measurement=measurement).exists())
         issue.assigned_to = self.tech
         issue.status = Issue.Status.IN_PROGRESS

@@ -84,7 +84,9 @@ def evaluate_measurement(measurement):
 def attach_network_context(*, issue, measurement, actor):
     """Link a visible issue to a measurement and freeze its current evaluator provenance."""
     issue = Issue.objects.select_for_update().get(pk=issue.pk)
-    measurement = NetworkMeasurement.objects.select_for_update().select_related(
+    # The related device and location building are nullable; PostgreSQL cannot
+    # lock the nullable side of their outer joins. Lock only the source row.
+    measurement = NetworkMeasurement.objects.select_for_update(of=("self",)).select_related(
         "network", "device", "location__building__campus"
     ).get(pk=measurement.pk)
     if IssueNetworkContext.objects.filter(issue=issue, network_measurement=measurement).exists():

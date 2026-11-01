@@ -77,13 +77,15 @@ def process_sla_sweep(now=None, batch_size=500):
     now = now or timezone.now()
     from apps.issues.models import Issue
     max_warning = SlaPolicy.objects.aggregate(value=Max("warning_before_seconds"))["value"] or 0
+    response_unresolved = Q(response_at__isnull=True) & ~Q(status__in=["IN_PROGRESS", "RESOLVED", "CLOSED"])
+    response_due = Q(response_due_at__lte=now, response_breached_at__isnull=True)
+    response_warning = Q(response_due_at__gt=now, response_due_at__lte=now + timedelta(seconds=max_warning), response_warning_exists=False)
     eligible = Issue.objects.filter(sla_policy__isnull=False).exclude(status__in=["RESOLVED", "CLOSED"]).annotate(
         response_warning_exists=Exists(SlaEvent.objects.filter(issue_id=OuterRef("pk"), event_type=SlaEvent.Type.RESPONSE_WARNING)),
         resolution_warning_exists=Exists(SlaEvent.objects.filter(issue_id=OuterRef("pk"), event_type=SlaEvent.Type.RESOLUTION_WARNING)),
     ).filter(
-        Q(response_due_at__lte=now, response_breached_at__isnull=True)
+        (response_unresolved & (response_due | response_warning))
         | Q(resolution_due_at__lte=now, resolution_breached_at__isnull=True)
-        | Q(response_due_at__gt=now, response_due_at__lte=now + timedelta(seconds=max_warning), response_warning_exists=False)
         | Q(resolution_due_at__gt=now, resolution_due_at__lte=now + timedelta(seconds=max_warning), resolution_warning_exists=False)
         | Q(next_escalation_at__lte=now)
     )
@@ -91,7 +93,7 @@ def process_sla_sweep(now=None, batch_size=500):
     processed = 0
     for issue in issues:
         policy = issue.sla_policy
-        response_done = issue.status in {"IN_PROGRESS", "RESOLVED", "CLOSED"}
+        response_done = issue.response_at is not None or issue.status in {"IN_PROGRESS", "RESOLVED", "CLOSED"}
         if not response_done and issue.response_due_at and issue.response_due_at <= now:
             if not issue.response_breached_at:
                 _record_breach(issue, "response", now)

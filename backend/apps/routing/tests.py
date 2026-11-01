@@ -14,6 +14,7 @@ from apps.notifications.models import Notification
 from apps.audit.models import AuditEntry
 from django.utils import timezone
 from datetime import timedelta
+from apps.issues.services import transition_issue
 
 
 class RoutingAndSlaTests(TestCase):
@@ -117,7 +118,6 @@ class RoutingAndSlaTests(TestCase):
         self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type__contains="APPROACHING").count(), 2)
 
     def test_late_response_and_resolution_are_recorded_during_transitions(self):
-        from apps.issues.services import transition_issue
         policy = SlaPolicy.objects.create(name="Transition test", response_time_seconds=60, resolution_time_seconds=120)
         self.issue.sla_policy = policy
         self.issue.response_due_at = timezone.now() - timedelta(minutes=5)
@@ -132,6 +132,82 @@ class RoutingAndSlaTests(TestCase):
         self.assertIsNotNone(self.issue.resolution_breached_at)
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESPONSE_BREACHED).count(), 1)
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESOLUTION_BREACHED).count(), 1)
+
+    def _resolve_issue_with_sla(self, *, due_response, due_resolution, response_at=None, response_breached_at=None, resolution_breached_at=None):
+        policy = SlaPolicy.objects.create(name=f"Reopen policy {SlaPolicy.objects.count()}", response_time_seconds=300, resolution_time_seconds=900, warning_before_seconds=30)
+        self.issue.sla_policy = policy
+        self.issue.response_due_at = due_response
+        self.issue.resolution_due_at = due_resolution
+        self.issue.response_at = response_at
+        self.issue.response_breached_at = response_breached_at
+        self.issue.resolution_breached_at = resolution_breached_at
+        self.issue.status = Issue.Status.RESOLVED
+        self.issue.resolved_at = timezone.now() - timedelta(minutes=1)
+        self.issue.save()
+        return policy
+
+    def test_reopen_before_deadlines_keeps_original_sla_clock_without_breach(self):
+        now = timezone.now()
+        response_due = now + timedelta(hours=2)
+        resolution_due = now + timedelta(hours=4)
+        self._resolve_issue_with_sla(due_response=response_due, due_resolution=resolution_due, response_at=now - timedelta(minutes=2))
+        transition_issue(self.issue, new_status=Issue.Status.REOPENED, actor=self.admin)
+
+        process_sla_sweep(now=now)
+        self.issue.refresh_from_db()
+        self.assertEqual(self.issue.response_due_at, response_due)
+        self.assertEqual(self.issue.resolution_due_at, resolution_due)
+        self.assertIsNone(self.issue.response_breached_at)
+        self.assertIsNone(self.issue.resolution_breached_at)
+        self.assertFalse(self.issue.sla_events.filter(event_type__in=[SlaEvent.Type.RESPONSE_BREACHED, SlaEvent.Type.RESOLUTION_BREACHED]).exists())
+
+    def test_reopen_after_deadline_breaches_only_unresolved_original_sla_once(self):
+        now = timezone.now()
+        response_due = now - timedelta(hours=2)
+        resolution_due = now - timedelta(minutes=2)
+        self._resolve_issue_with_sla(due_response=response_due, due_resolution=resolution_due, response_at=response_due - timedelta(minutes=1))
+        transition_issue(self.issue, new_status=Issue.Status.REOPENED, actor=self.admin)
+
+        process_sla_sweep(now=now)
+        process_sla_sweep(now=now + timedelta(seconds=1))
+        self.issue.refresh_from_db()
+        self.assertEqual(self.issue.response_due_at, response_due)
+        self.assertEqual(self.issue.resolution_due_at, resolution_due)
+        self.assertIsNone(self.issue.response_breached_at)
+        self.assertIsNotNone(self.issue.resolution_breached_at)
+        self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESPONSE_BREACHED).count(), 0)
+        self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESOLUTION_BREACHED).count(), 1)
+        self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type="RESOLUTION_SLA_BREACHED").count(), 1)
+
+    def test_reopen_preserves_existing_breaches_escalation_and_history(self):
+        now = timezone.now()
+        response_breach = now - timedelta(hours=3)
+        resolution_breach = now - timedelta(hours=2)
+        policy = self._resolve_issue_with_sla(
+            due_response=now - timedelta(hours=4), due_resolution=now - timedelta(hours=3),
+            response_at=now - timedelta(hours=3, minutes=30), response_breached_at=response_breach,
+            resolution_breached_at=resolution_breach,
+        )
+        self.issue.current_escalation_level = 1
+        self.issue.escalation_started_at = response_breach
+        self.issue.next_escalation_at = now + timedelta(hours=1)
+        self.issue.save(update_fields=["current_escalation_level", "escalation_started_at", "next_escalation_at"])
+        SlaEvent.objects.create(issue=self.issue, policy=policy, event_type=SlaEvent.Type.RESPONSE_BREACHED, created_at=response_breach)
+        SlaEvent.objects.create(issue=self.issue, policy=policy, event_type=SlaEvent.Type.RESOLUTION_BREACHED, created_at=resolution_breach)
+        for event_type in ("RESPONSE_SLA_BREACHED", "RESOLUTION_SLA_BREACHED"):
+            Notification.objects.create(recipient=self.supervisor, issue=self.issue, notification_type=event_type, title="Prior breach", message=self.issue.ticket_number)
+
+        transition_issue(self.issue, new_status=Issue.Status.REOPENED, actor=self.admin)
+        process_sla_sweep(now=now)
+        process_sla_sweep(now=now + timedelta(seconds=1))
+        self.issue.refresh_from_db()
+        self.assertEqual(self.issue.response_breached_at, response_breach)
+        self.assertEqual(self.issue.resolution_breached_at, resolution_breach)
+        self.assertEqual(self.issue.current_escalation_level, 1)
+        self.assertEqual(self.issue.next_escalation_at, now + timedelta(hours=1))
+        self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESPONSE_BREACHED).count(), 1)
+        self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESOLUTION_BREACHED).count(), 1)
+        self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type__in=["RESPONSE_SLA_BREACHED", "RESOLUTION_SLA_BREACHED"]).count(), 2)
 
     def test_operational_dashboard_counts_persisted_records(self):
         policy = SlaPolicy.objects.create(name="Dashboard", response_time_seconds=300, resolution_time_seconds=1200)
