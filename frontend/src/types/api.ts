@@ -1,20 +1,17 @@
 export type UserRole =
   | 'STUDENT'
   | 'STAFF'
-  | 'TECHNICIAN'
-  | 'SUPERVISOR'
-  | 'FACILITY_MANAGER'
-  | 'IT_MANAGER'
-  | 'DEPARTMENT_HEAD'
-  | 'CAMPUS_ADMIN'
-  | 'SYSTEM_ADMIN'
+  | 'TECHNICAL_STAFF'
+  | 'ADMIN'
 
 export interface AuthUser {
   id: number
   email: string
+  institutional_id: string | null
   full_name: string
   phone_number: string
   role: UserRole
+  technical_specialization: string
   date_joined: string
   team_ids: number[]
 }
@@ -87,6 +84,11 @@ export interface IssueRecord {
   assigned_team: number | null
   assigned_team_name: string | null
   priority: IssuePriority
+  priority_requested_by?: number | null
+  priority_requested_by_name?: string | null
+  priority_requested_at?: string | null
+  priority_request_reason?: string
+  priority_history?: { old_priority: IssuePriority; new_priority: IssuePriority; reason: string; actor: string | null; created_at: string }[]
   status: IssueStatus
   created_at: string
   updated_at: string

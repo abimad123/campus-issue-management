@@ -5,18 +5,19 @@ from .models import User
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    identifier = serializers.CharField(max_length=254)
     password = serializers.CharField(write_only=True, trim_whitespace=False)
 
     def validate(self, attrs):
         request = self.context.get("request")
-        user = authenticate(
-            request,
-            username=attrs["email"].lower(),
-            password=attrs["password"],
-        )
+        from django.contrib.auth import get_user_model
+        UserModel = get_user_model()
+        identifier = attrs["identifier"].strip()
+        user_obj = UserModel.objects.filter(institutional_id__iexact=identifier).first()
+        username = user_obj.email if user_obj else identifier.lower()
+        user = authenticate(request, username=username, password=attrs["password"])
         if user is None or not user.is_active:
-            raise serializers.ValidationError("Email or password is incorrect.")
+            raise serializers.ValidationError("Institutional ID or email and password are incorrect.")
         attrs["user"] = user
         return attrs
 
@@ -26,7 +27,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "email", "full_name", "phone_number", "role", "date_joined", "team_ids")
+        fields = ("id", "email", "institutional_id", "full_name", "phone_number", "role", "technical_specialization", "date_joined", "team_ids")
         read_only_fields = fields
 
     def get_team_ids(self, obj):

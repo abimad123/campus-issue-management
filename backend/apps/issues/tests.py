@@ -31,8 +31,8 @@ class IssueApiTestSetup:
     def setUp(self):
         self.student = User.objects.create_user("student@example.test", "Sample Student", "test-password", role=UserRole.STUDENT)
         self.other_student = User.objects.create_user("other@example.test", "Other Student", "test-password", role=UserRole.STUDENT)
-        self.admin = User.objects.create_user("admin@example.test", "Campus Admin", "test-password", role=UserRole.CAMPUS_ADMIN)
-        self.technician = User.objects.create_user("tech@example.test", "Sample Technician", "test-password", role=UserRole.TECHNICIAN)
+        self.admin = User.objects.create_user("admin@example.test", "Campus Admin", "test-password", role=UserRole.ADMIN)
+        self.technician = User.objects.create_user("tech@example.test", "Sample Technician", "test-password", role=UserRole.TECHNICAL_STAFF)
         campus = Campus.objects.create(name="Development Campus", code="development")
         building = Building.objects.create(campus=campus, name="Academic Block", code="academic")
         self.location = Location.objects.create(building=building, name="Classroom 1", kind=Location.Kind.CLASSROOM)
@@ -46,7 +46,6 @@ class IssueApiTestSetup:
             "description": "The lights in the room are not working since this morning.",
             "category": self.category.pk,
             "location": self.location.pk,
-            "priority": Issue.Priority.MEDIUM,
         }
         data.update(updates)
         return data
@@ -69,22 +68,22 @@ class IssueApiTests(IssueApiTestSetup, APITestCase):
         self.assertEqual(self.client.get(reverse("issue-list")).data["count"], 0)
         self.assertEqual(self.client.patch(reverse("issue-detail", args=[issue.pk]), {"title": "Changed"}, format="json").status_code, 403)
 
-    def test_supervisor_can_review_unassigned_issue_but_cannot_transition_before_assignment(self):
+    def test_admin_can_review_and_manage_unassigned_issue(self):
         team = Team.objects.create(name="Supervisor test team")
-        supervisor = User.objects.create_user("supervisor@example.test", "Supervisor", "test-password", role=UserRole.SUPERVISOR)
-        team.members.add(supervisor)
+        technician = User.objects.create_user("technician@example.test", "Technician", "test-password", role=UserRole.TECHNICAL_STAFF)
+        team.members.add(technician)
         created = self.client.post(reverse("issue-list"), self.payload(), format="json")
         issue_id = created.data["id"]
 
-        self.client.force_authenticate(supervisor)
+        self.client.force_authenticate(self.admin)
         self.assertEqual(self.client.get(reverse("issue-detail", args=[issue_id])).status_code, 200)
         transition = self.client.post(reverse("issue-status", args=[issue_id]), {"status": Issue.Status.IN_REVIEW}, format="json")
-        self.assertEqual(transition.status_code, 403)
-        assignment = self.client.post(f"/api/issues/{issue_id}/assign/", {"team": team.pk, "reason": "Supervisor accepts unassigned issue"}, format="json")
+        self.assertEqual(transition.status_code, 200)
+        assignment = self.client.post(f"/api/issues/{issue_id}/assign/", {"team": team.pk, "user": technician.pk, "reason": "Admin assigns to eligible technician"}, format="json")
         self.assertEqual(assignment.status_code, 201, assignment.data)
         issue = Issue.objects.get(pk=issue_id)
         self.assertEqual(issue.assigned_team_id, team.pk)
-        self.assertEqual(issue.status, Issue.Status.ASSIGNED)
+        self.assertEqual(issue.status, Issue.Status.IN_REVIEW)
 
     def test_create_validation_and_category_location_asset_apis(self):
         invalid = self.client.post(reverse("issue-list"), {**self.payload(), "description": "short"}, format="json")
@@ -100,6 +99,21 @@ class IssueApiTests(IssueApiTestSetup, APITestCase):
         self.assertEqual(self.client.get(reverse("asset-list")).status_code, 200)
         forbidden = self.client.post(reverse("issue-category-list"), {"name": "New category"}, format="json")
         self.assertEqual(forbidden.status_code, 403)
+
+    def test_priority_request_is_staff_only_and_audited(self):
+        student_priority = self.client.post(reverse("issue-list"), self.payload(priority=Issue.Priority.HIGH), format="json")
+        self.assertEqual(student_priority.status_code, 400)
+        staff = User.objects.create_user("staff@example.test", "Sample Staff", "test-password", role=UserRole.STAFF)
+        self.client.force_authenticate(staff)
+        missing_reason = self.client.post(reverse("issue-list"), self.payload(request_priority=True), format="json")
+        self.assertEqual(missing_reason.status_code, 400)
+        response = self.client.post(reverse("issue-list"), self.payload(request_priority=True, priority_reason="Classroom equipment blocks today's lecture."), format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        issue = Issue.objects.get(pk=response.data["id"])
+        self.assertEqual(issue.priority, Issue.Priority.HIGH)
+        self.assertEqual(issue.routing_priority, Issue.Priority.MEDIUM)
+        self.assertEqual(issue.priority_requested_by, staff)
+        self.assertTrue(issue.priority_events.filter(actor=staff, new_priority=Issue.Priority.HIGH).exists())
 
     def test_filters_and_pagination(self):
         for number in range(23):
@@ -140,12 +154,9 @@ class IssueApiTests(IssueApiTestSetup, APITestCase):
         self.assertIsNone(issue.resolved_at)
         self.assertEqual(issue.events.count(), 1)
 
-    def test_manager_and_supervisor_can_resolve_issue_without_work_order(self):
+    def test_admin_can_resolve_issue_without_work_order(self):
         team = Team.objects.create(name="Verification team")
-        supervisor = User.objects.create_user("reviewer@example.test", "Supervisor", "test-password", role=UserRole.SUPERVISOR)
-        team.members.add(supervisor)
-
-        for actor, suffix in ((self.admin, "admin"), (supervisor, "supervisor")):
+        for actor, suffix in ((self.admin, "admin"),):
             issue = Issue.objects.create(
                 title=f"Repair completed by {suffix}",
                 description="A campus repair is ready to be reviewed and resolved without a field work order.",

@@ -6,7 +6,7 @@ from apps.assets.models import Asset
 from apps.campus.models import Location
 from apps.users.roles import UserRole
 
-from .models import Issue, IssueAttachment, IssueCategory, IssueEvent
+from .models import Issue, IssueAttachment, IssueCategory, IssueEvent, IssuePriorityEvent
 from .services import transition_issue
 
 
@@ -59,13 +59,13 @@ class IssueListSerializer(serializers.ModelSerializer):
     def get_reporter_name(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
-        if user and (user.id == obj.reporter_id or user.role in {UserRole.CAMPUS_ADMIN, UserRole.SYSTEM_ADMIN, UserRole.FACILITY_MANAGER, UserRole.IT_MANAGER, UserRole.DEPARTMENT_HEAD, UserRole.SUPERVISOR}):
+        if user and (user.id == obj.reporter_id or user.role == UserRole.ADMIN):
             return obj.reporter.full_name
         return None
 
     def _is_operational(self):
         request = self.context.get("request")
-        return request and request.user.role in {UserRole.TECHNICIAN, UserRole.SUPERVISOR, UserRole.FACILITY_MANAGER, UserRole.IT_MANAGER, UserRole.DEPARTMENT_HEAD, UserRole.CAMPUS_ADMIN, UserRole.SYSTEM_ADMIN}
+        return request and request.user.role in {UserRole.TECHNICAL_STAFF, UserRole.ADMIN}
 
     def get_assigned_to(self, obj): return obj.assigned_to_id if self._is_operational() else None
     def get_assigned_team(self, obj): return obj.assigned_team_id if self._is_operational() else None
@@ -122,7 +122,10 @@ class IssueDetailSerializer(IssueListSerializer):
     assignment_history = serializers.SerializerMethodField()
 
     class Meta(IssueListSerializer.Meta):
-        fields = IssueListSerializer.Meta.fields + ("description", "reporter_email", "attachments", "events", "response_due_at", "resolution_due_at", "sla_policy_name", "response_breached_at", "resolution_breached_at", "current_escalation_level", "assignment_history")
+        fields = IssueListSerializer.Meta.fields + ("description", "reporter_email", "attachments", "events", "response_due_at", "resolution_due_at", "sla_policy_name", "response_breached_at", "resolution_breached_at", "current_escalation_level", "assignment_history", "priority_requested_by", "priority_requested_by_name", "priority_requested_at", "priority_request_reason", "priority_history")
+
+    priority_requested_by_name = serializers.CharField(source="priority_requested_by.full_name", read_only=True, allow_null=True)
+    priority_history = serializers.SerializerMethodField()
 
     def _is_operational(self):
         return super()._is_operational()
@@ -141,17 +144,25 @@ class IssueDetailSerializer(IssueListSerializer):
     def get_reporter_email(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
-        if user and (user.id == obj.reporter_id or user.role in {UserRole.CAMPUS_ADMIN, UserRole.SYSTEM_ADMIN, UserRole.FACILITY_MANAGER, UserRole.IT_MANAGER, UserRole.DEPARTMENT_HEAD, UserRole.SUPERVISOR}):
+        if user and (user.id == obj.reporter_id or user.role == UserRole.ADMIN):
             return obj.reporter.email
         return None
+
+    def get_priority_history(self, obj):
+        request = self.context.get("request")
+        if not request or request.user.role != UserRole.ADMIN:
+            return []
+        return [{"old_priority": item.old_priority, "new_priority": item.new_priority, "reason": item.reason, "actor": item.actor.full_name if item.actor_id else None, "created_at": item.created_at} for item in obj.priority_events.select_related("actor")]
 
 
 class IssueCreateSerializer(serializers.ModelSerializer):
     photo = serializers.ImageField(write_only=True, required=False)
+    request_priority = serializers.BooleanField(write_only=True, required=False, default=False)
+    priority_reason = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=500)
 
     class Meta:
         model = Issue
-        fields = ("id", "ticket_number", "title", "description", "category", "location", "asset", "priority", "status", "created_at", "photo")
+        fields = ("id", "ticket_number", "title", "description", "category", "location", "asset", "priority", "status", "created_at", "photo", "request_priority", "priority_reason")
         read_only_fields = ("id", "ticket_number", "status", "created_at")
 
     def validate_category(self, category):
@@ -180,6 +191,19 @@ class IssueCreateSerializer(serializers.ModelSerializer):
         return photo
 
     def validate(self, attrs):
+        from rest_framework.exceptions import ValidationError
+        user = self.context["request"].user
+        request_priority = attrs.get("request_priority", False)
+        if "priority" in self.initial_data and user.role != UserRole.ADMIN:
+            raise ValidationError({"priority": "Only administrators may set priority directly; staff can request priority handling."})
+        if request_priority and "priority" in self.initial_data:
+            raise ValidationError({"priority": "Remove the direct priority value when requesting priority handling."})
+        if request_priority and user.role != UserRole.STAFF:
+            raise ValidationError({"request_priority": "Only staff accounts may request priority handling."})
+        if request_priority and len((attrs.get("priority_reason") or "").strip()) < 5:
+            raise ValidationError({"priority_reason": "Provide at least 5 characters explaining the priority request."})
+        if not request_priority and attrs.get("priority_reason"):
+            raise ValidationError({"priority_reason": "A reason is accepted only with a priority request."})
         asset = attrs.get("asset")
         location = attrs.get("location")
         if asset and location and asset.location_id != location.id:
@@ -188,8 +212,22 @@ class IssueCreateSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        from django.utils import timezone
+        from apps.audit.services import record_audit
+        from .models import IssuePriorityEvent
         photo = validated_data.pop("photo", None)
+        request_priority = validated_data.pop("request_priority", False)
+        priority_reason = validated_data.pop("priority_reason", "").strip()
+        validated_data["routing_priority"] = validated_data.get("priority", Issue.Priority.MEDIUM)
+        if request_priority:
+            validated_data["priority"] = Issue.Priority.HIGH
+            validated_data["priority_requested_by"] = self.context["request"].user
+            validated_data["priority_requested_at"] = timezone.now()
+            validated_data["priority_request_reason"] = priority_reason
         issue = Issue.objects.create(reporter=self.context["request"].user, **validated_data)
+        if request_priority:
+            IssuePriorityEvent.objects.create(issue=issue, actor=issue.reporter, old_priority=Issue.Priority.MEDIUM, new_priority=Issue.Priority.HIGH, reason=priority_reason)
+            record_audit("issue.priority_requested", actor=issue.reporter, entity=issue, context={"priority": Issue.Priority.HIGH, "reason": priority_reason})
         IssueEvent.objects.create(issue=issue, actor=issue.reporter, to_status=Issue.Status.OPEN, note="Issue submitted")
         if photo:
             IssueAttachment.objects.create(issue=issue, file=photo, uploaded_by=issue.reporter)
@@ -211,3 +249,8 @@ class IssueStatusSerializer(serializers.Serializer):
             actor=self.context["request"].user,
             note=self.validated_data.get("note", ""),
         )
+
+
+class IssuePriorityUpdateSerializer(serializers.Serializer):
+    priority = serializers.ChoiceField(choices=Issue.Priority.choices)
+    reason = serializers.CharField(min_length=5, max_length=500)

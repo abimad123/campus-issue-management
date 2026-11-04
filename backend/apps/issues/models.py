@@ -48,6 +48,10 @@ class Issue(models.Model):
     assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="assigned_issues", null=True, blank=True)
     assigned_team = models.ForeignKey("campus.Team", on_delete=models.SET_NULL, related_name="issues", null=True, blank=True)
     priority = models.CharField(max_length=8, choices=Priority.choices, default=Priority.MEDIUM)
+    routing_priority = models.CharField(max_length=8, choices=Priority.choices, null=True, blank=True, editable=False)
+    priority_requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="priority_requests")
+    priority_requested_at = models.DateTimeField(null=True, blank=True)
+    priority_request_reason = models.CharField(max_length=500, blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -116,3 +120,15 @@ class IssueAttachment(models.Model):
 
     def __str__(self):
         return f"Attachment for {self.issue}"
+
+
+class IssuePriorityEvent(models.Model):
+    issue = models.ForeignKey(Issue, on_delete=models.CASCADE, related_name="priority_events")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="issue_priority_events")
+    old_priority = models.CharField(max_length=8, choices=Issue.Priority.choices)
+    new_priority = models.CharField(max_length=8, choices=Issue.Priority.choices)
+    reason = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "pk"]

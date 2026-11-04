@@ -36,7 +36,9 @@ services:
         condition: service_healthy
   backend:
     build: ./backend
-    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    # Avoid Django StatReloader scans over Windows/WSL bind mounts, which can
+    # raise EIO for mounted paths such as /app/locale. Restart after backend edits.
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
     env_file:
       - path: .env
         required: false

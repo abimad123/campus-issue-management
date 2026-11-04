@@ -14,7 +14,7 @@ from .models import Asset
 class AssetApiTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user("reader@example.test", "Asset Reader", "test-password", role=UserRole.STUDENT)
-        self.admin = User.objects.create_user("asset-admin@example.test", "Asset Admin", "test-password", role=UserRole.CAMPUS_ADMIN)
+        self.admin = User.objects.create_user("asset-admin@example.test", "Asset Admin", "test-password", role=UserRole.ADMIN)
         campus = Campus.objects.create(name="Development Campus", code="dev-campus")
         building = Building.objects.create(campus=campus, name="Computer Science Building", code="cs")
         location = Location.objects.create(building=building, name="Computer Lab 1", kind=Location.Kind.LABORATORY)

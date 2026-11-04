@@ -2,7 +2,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps.users.roles import ISSUE_MANAGEMENT_ROLES, UserRole
+from apps.users.roles import UserRole
 
 from .models import Issue, IssueEvent
 
@@ -18,12 +18,10 @@ ALLOWED_TRANSITIONS = {
 
 
 def can_change_issue_status(user, issue):
-    if user.role in ISSUE_MANAGEMENT_ROLES:
+    if user.role == UserRole.ADMIN:
         return True
-    if user.role == UserRole.TECHNICIAN:
+    if user.role == UserRole.TECHNICAL_STAFF:
         return issue.assigned_to_id == user.id
-    if user.role == UserRole.SUPERVISOR:
-        return issue.assigned_team_id in user.teams.values_list("id", flat=True)
     return False
 
 
@@ -35,7 +33,7 @@ def transition_issue(issue, *, new_status, actor, note=""):
     issue.__dict__.update(locked_issue.__dict__)
     if not can_change_issue_status(actor, issue):
         raise PermissionDenied("You are not allowed to update this issue status.")
-    if actor.role == UserRole.TECHNICIAN and new_status in {
+    if actor.role == UserRole.TECHNICAL_STAFF and new_status in {
         Issue.Status.RESOLVED,
         Issue.Status.CLOSED,
         Issue.Status.REOPENED,

@@ -144,15 +144,12 @@ The platform must support role-based access control.
 
 Roles:
 
-1. Student
-2. Staff
-3. Technician / Field Staff
-4. Team Supervisor
-5. Facility Manager
-6. IT Manager
-7. Department Head
-8. Campus Administrator
-9. System Administrator
+1. Student (`STUDENT`)
+2. Staff (`STAFF`)
+3. Technical Staff (`TECHNICAL_STAFF`)
+4. Admin (`ADMIN`)
+
+Former supervisor and manager responsibilities are consolidated under Admin. Preserve individual accounts and audit history; store technical specialization separately from role.
 
 Never rely only on frontend hiding for authorization.
 
@@ -209,7 +206,7 @@ Support:
 - warning threshold
 - breach detection
 - escalation levels
-- supervisor notifications
+- administrator notifications
 - breach history
 
 Store important SLA timestamps directly on the issue/ticket.

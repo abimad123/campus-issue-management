@@ -9,7 +9,7 @@ type TeamOption = { id: number; name: string; is_active: boolean; members: numbe
 type TechnicianOption = { id: number; full_name: string; email: string }
 export type WorkOrderSummary = { open: number; in_progress: number; awaiting_verification: number; verified: number }
 
-const managerRoles = new Set<AuthUser['role']>(['SUPERVISOR', 'FACILITY_MANAGER', 'IT_MANAGER', 'DEPARTMENT_HEAD', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
+const managerRoles = new Set<AuthUser['role']>(['ADMIN'])
 const statusLabels: Record<WorkOrderStatus, string> = {
   ASSIGNED: 'Assigned', ACCEPTED: 'Accepted', IN_PROGRESS: 'In progress', COMPLETED: 'Awaiting verification',
   VERIFIED: 'Verified', REWORK: 'Rework required', CANCELLED: 'Cancelled', CLOSED: 'Closed',
@@ -37,7 +37,7 @@ export function WorkOrderListPage({ user }: { user: AuthUser }) {
   const query = useQuery({ queryKey: ['work-orders', filter], queryFn: () => apiRequest<Paginated<WorkOrderRecord>>(`/work-orders/${filter ? `?status=${filter}` : ''}`) })
   const summary = useQuery({ queryKey: ['work-order-summary'], queryFn: () => apiRequest<WorkOrderSummary>('/work-orders/summary/') })
   return <section className="work-order-page" aria-labelledby="work-orders-title">
-    <div className="section-heading"><div><h2 id="work-orders-title">{user.role === 'TECHNICIAN' ? 'My work orders' : user.role === 'SUPERVISOR' ? 'Team work orders' : 'Operational work orders'}</h2><p>Field tasks linked to existing campus service issues.</p></div>
+    <div className="section-heading"><div><h2 id="work-orders-title">{user.role === 'TECHNICAL_STAFF' ? 'My work orders' : 'Campus work orders'}</h2><p>Field tasks linked to existing campus service issues.</p></div>
       <label className="work-order-filter">Status<Select aria-label="Filter work orders by status" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="">All statuses</option>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></label>
     </div>
     {summary.data && <div className="work-order-metrics" aria-label="Work order summary"><Metric label="Open" value={summary.data.open} /><Metric label="In progress" value={summary.data.in_progress} /><Metric label="Awaiting verification" value={summary.data.awaiting_verification} /><Metric label="Verified / closed" value={summary.data.verified} /></div>}
@@ -58,7 +58,7 @@ export function WorkOrderDetailPage({ user }: { user: AuthUser }) {
   const navigate = useNavigate()
   const query = useQuery({ queryKey: ['work-order', id], queryFn: () => apiRequest<WorkOrderDetail>(`/work-orders/${id}/`) })
   const manager = managerRoles.has(user.role)
-  const technician = user.role === 'TECHNICIAN'
+  const technician = user.role === 'TECHNICAL_STAFF'
   const [note, setNote] = useState('')
   const [materialName, setMaterialName] = useState('')
   const [materialQuantity, setMaterialQuantity] = useState('1')
@@ -83,7 +83,7 @@ export function WorkOrderDetailPage({ user }: { user: AuthUser }) {
     },
   })
   const teams = useQuery({ queryKey: ['teams'], queryFn: () => apiRequest<Paginated<TeamOption>>('/teams/'), enabled: manager })
-  const eligibleTeams = (teams.data?.results ?? []).filter((team) => team.is_active && (user.role !== 'SUPERVISOR' || user.team_ids.includes(team.id)))
+  const eligibleTeams = (teams.data?.results ?? []).filter((team) => team.is_active && (user.role !== 'ADMIN' || user.team_ids.includes(team.id)))
   const technicians = useQuery({ queryKey: ['work-order-technicians', teamId], queryFn: () => apiRequest<TechnicianOption[]>(`/work-order-technicians/?team=${teamId}`), enabled: manager && Boolean(teamId) })
   const selectedTechnicianId = technicianId || (teamId === String(query.data?.team ?? '') ? String(query.data?.assigned_to ?? '') : '')
 
@@ -126,7 +126,7 @@ export function WorkOrderDetailPage({ user }: { user: AuthUser }) {
         </>}
         {workOrder.status === 'IN_PROGRESS' && <>
           <form className="work-order-form" onSubmit={submitMaterial}><h3>Materials used</h3><label htmlFor="material-name">Material name</label><Input id="material-name" value={materialName} maxLength={160} required onChange={(event) => setMaterialName(event.target.value)} /><label htmlFor="material-quantity">Quantity</label><Input id="material-quantity" type="number" min="0.01" step="0.01" value={materialQuantity} required onChange={(event) => setMaterialQuantity(event.target.value)} /><label htmlFor="material-note">Note <span className="optional-mark">Optional</span></label><Input id="material-note" value={materialNote} maxLength={500} onChange={(event) => setMaterialNote(event.target.value)} /><Button disabled={mutation.isPending}>Record material</Button></form>
-          <form className="work-order-form" onSubmit={submitResolution}><h3>Submit resolution</h3><label htmlFor="wo-resolution">Work performed, finding, action taken, and current condition</label><textarea id="wo-resolution" className="field" value={resolution} onChange={(event) => setResolution(event.target.value)} minLength={20} maxLength={5000} required rows={5} /><small>At least 20 characters. A supervisor must verify before the issue can be resolved.</small><Button variant="primary" disabled={mutation.isPending}>Complete work order</Button></form>
+          <form className="work-order-form" onSubmit={submitResolution}><h3>Submit resolution</h3><label htmlFor="wo-resolution">Work performed, finding, action taken, and current condition</label><textarea id="wo-resolution" className="field" value={resolution} onChange={(event) => setResolution(event.target.value)} minLength={20} maxLength={5000} required rows={5} /><small>At least 20 characters. An administrator must verify before the issue can be resolved.</small><Button variant="primary" disabled={mutation.isPending}>Complete work order</Button></form>
         </>}
       </section>}
       <section className="detail-section"><h3>Resolution summary</h3>{workOrder.resolution_summary ? <p className="issue-description">{workOrder.resolution_summary}</p> : <p className="muted-copy">The technician has not submitted a resolution yet.</p>}</section>
@@ -136,7 +136,7 @@ export function WorkOrderDetailPage({ user }: { user: AuthUser }) {
       <section className="detail-section"><h3>Work-order history</h3>{workOrder.events.length ? <ol className="timeline">{workOrder.events.map((event) => <li key={event.id}><span className="timeline-dot" aria-hidden="true" /><div><strong>{event.event_type.replace(/_/g, ' ')}</strong><p>{event.note}{event.actor_name ? ` · ${event.actor_name}` : ''}</p><time dateTime={event.created_at}>{date(event.created_at)}</time></div></li>)}</ol> : <p className="muted-copy">No history recorded.</p>}</section>
     </div><aside className="detail-aside work-order-aside" aria-label="Work order details"><h3>Operational details</h3><Info label="Status" value={statusLabels[workOrder.status]} /><Info label="Team" value={workOrder.team_name} /><Info label="Technician" value={workOrder.assigned_to_name ?? 'Not assigned'} /><Info label="Priority" value={workOrder.priority} /><Info label="Issue SLA deadline" value={date(workOrder.issue_sla_deadline)} /><Info label="Created" value={date(workOrder.created_at)} /><Info label="Accepted" value={date(workOrder.accepted_at)} /><Info label="Started" value={date(workOrder.started_at)} /><Info label="Completed" value={date(workOrder.completed_at)} /><Info label="Verified" value={date(workOrder.verified_at)} />
       {manager && workOrder.status !== 'COMPLETED' && workOrder.status !== 'VERIFIED' && workOrder.status !== 'CLOSED' && workOrder.status !== 'CANCELLED' && <form className="assignment-form" onSubmit={submitAssign}><h4>Assign technician</h4><label htmlFor="wo-team">Team</label><Select id="wo-team" value={teamId || String(workOrder.team)} onChange={(event) => { setTeamId(event.target.value); setTechnicianId('') }}><option value="">Select a team</option>{eligibleTeams.map((team) => <option value={team.id} key={team.id}>{team.name}</option>)}</Select><label htmlFor="wo-tech">Active technician</label><Select id="wo-tech" value={selectedTechnicianId} onChange={(event) => setTechnicianId(event.target.value)} disabled={!technicians.data?.length}><option value="">Select a technician</option>{(technicians.data ?? []).map((member) => <option value={member.id} key={member.id}>{member.full_name} · {member.email}</option>)}</Select>{technicians.isError && <p className="form-error" role="alert">{errorMessage(technicians.error)}</p>}<label htmlFor="wo-assign-reason">Reason</label><Input id="wo-assign-reason" value={assignmentReason} minLength={3} maxLength={500} required onChange={(event) => setAssignmentReason(event.target.value)} /><Button variant="primary" disabled={mutation.isPending || !selectedTechnicianId}>{workOrder.assigned_to ? 'Reassign work' : 'Assign work'}</Button></form>}
-      {manager && workOrder.status === 'COMPLETED' && <div className="work-order-review"><h4>Supervisor verification</h4><Button variant="primary" disabled={mutation.isPending} onClick={() => send('verify')}>Verify completion</Button><form onSubmit={submitRework}><label htmlFor="rework-reason">Return for additional work</label><textarea id="rework-reason" className="field" value={reviewReason} minLength={3} maxLength={500} required onChange={(event) => setReviewReason(event.target.value)} rows={3} /><Button disabled={mutation.isPending}>Request rework</Button></form></div>}
+      {manager && workOrder.status === 'COMPLETED' && <div className="work-order-review"><h4>Administrator verification</h4><Button variant="primary" disabled={mutation.isPending} onClick={() => send('verify')}>Verify completion</Button><form onSubmit={submitRework}><label htmlFor="rework-reason">Return for additional work</label><textarea id="rework-reason" className="field" value={reviewReason} minLength={3} maxLength={500} required onChange={(event) => setReviewReason(event.target.value)} rows={3} /><Button disabled={mutation.isPending}>Request rework</Button></form></div>}
       {manager && workOrder.status === 'VERIFIED' && <Button disabled={mutation.isPending} onClick={() => send('close')}>Close work order</Button>}
       {manager && ['ASSIGNED', 'ACCEPTED', 'REWORK'].includes(workOrder.status) && <form className="work-order-form" onSubmit={(event) => { event.preventDefault(); send('cancel', { reason: cancelReason }) }}><h4>Cancel work order</h4><label htmlFor="cancel-reason">Reason</label><Input id="cancel-reason" minLength={3} maxLength={500} required value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} /><Button disabled={mutation.isPending}>Cancel task</Button></form>}
       {workOrder.created_by_name && <Info label="Created by" value={workOrder.created_by_name} />}{workOrder.verified_by_name && <Info label="Verified by" value={workOrder.verified_by_name} />}
@@ -160,11 +160,11 @@ function WorkOrderLifecycle({ status }: { status: WorkOrderStatus }) {
 export function IssueWorkOrdersSection({ issueId, assignedTeam, user }: { issueId: number; assignedTeam: number | null; user: AuthUser }) {
   const cache = useQueryClient()
   const navigate = useNavigate()
-  const canView = user.role === 'TECHNICIAN' || managerRoles.has(user.role)
+  const canView = user.role === 'TECHNICAL_STAFF' || managerRoles.has(user.role)
   const canCreate = managerRoles.has(user.role)
   const query = useQuery({ queryKey: ['issue-work-orders', issueId], queryFn: () => apiRequest<Paginated<WorkOrderRecord>>(`/issues/${issueId}/work-orders/`), enabled: canView })
   const teams = useQuery({ queryKey: ['teams'], queryFn: () => apiRequest<Paginated<TeamOption>>('/teams/'), enabled: canCreate })
-  const allowedTeams = (teams.data?.results ?? []).filter((team) => team.is_active && (user.role !== 'SUPERVISOR' || user.team_ids.includes(team.id)))
+  const allowedTeams = (teams.data?.results ?? []).filter((team) => team.is_active && (user.role !== 'ADMIN' || user.team_ids.includes(team.id)))
   const initialTeam = assignedTeam && allowedTeams.some((team) => team.id === assignedTeam) ? String(assignedTeam) : ''
   const [team, setTeam] = useState(initialTeam)
   const [title, setTitle] = useState('')

@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-from apps.users.roles import ISSUE_MANAGEMENT_ROLES, UserRole
+from apps.users.roles import UserRole
 
 
 class IssuePermission(BasePermission):
@@ -14,19 +14,15 @@ class IssuePermission(BasePermission):
             return True
         if getattr(view, "action", None) == "create":
             return True
-        return user.role in ISSUE_MANAGEMENT_ROLES | {UserRole.TECHNICIAN, UserRole.SUPERVISOR}
+        return user.role in {UserRole.ADMIN, UserRole.TECHNICAL_STAFF}
 
     def has_object_permission(self, request, view, obj):
+        if request.user.role == UserRole.ADMIN:
+            return True
         if obj.reporter_id == request.user.id:
             return request.method in SAFE_METHODS
-        if request.user.role in ISSUE_MANAGEMENT_ROLES:
-            return True
-        if request.user.role == UserRole.TECHNICIAN:
+        if request.user.role == UserRole.TECHNICAL_STAFF:
             return obj.assigned_to_id == request.user.id and (
                 request.method in SAFE_METHODS or getattr(view, "action", None) == "status"
             )
-        if request.user.role == UserRole.SUPERVISOR:
-            if obj.assigned_team_id is None:
-                return request.method in SAFE_METHODS
-            return obj.assigned_team_id in request.user.teams.values_list("id", flat=True)
         return False

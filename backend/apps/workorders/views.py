@@ -204,14 +204,12 @@ class WorkOrderTechnicianOptionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if request.user.role not in ISSUE_MANAGEMENT_ROLES | {UserRole.SUPERVISOR}:
-            raise PermissionDenied("Only operational managers may select technicians.")
+        if request.user.role != UserRole.ADMIN:
+            raise PermissionDenied("Only Admin can select technicians.")
         try:
             team_id = int(request.query_params.get("team", ""))
         except ValueError:
             raise ValidationError({"team": "Choose a valid team."}) from None
         team = get_object_or_404(Team, pk=team_id, is_active=True)
-        if request.user.role == UserRole.SUPERVISOR and not request.user.teams.filter(pk=team.pk, is_active=True).exists():
-            raise PermissionDenied("Supervisors may select technicians only in their own teams.")
-        users = User.objects.filter(role=UserRole.TECHNICIAN, is_active=True, teams=team).order_by("full_name", "pk")
+        users = User.objects.filter(role=UserRole.TECHNICAL_STAFF, is_active=True, teams=team).order_by("full_name", "pk")
         return Response([{"id": user.pk, "full_name": user.full_name, "email": user.email} for user in users])

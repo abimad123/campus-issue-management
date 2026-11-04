@@ -8,7 +8,6 @@ import { IssueWorkOrdersSection } from '../workorders/WorkOrderPages'
 
 const statuses: IssueStatus[] = ['OPEN', 'IN_REVIEW', 'ASSIGNED', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', 'REOPENED']
 const priorities: IssuePriority[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
-const networkReaderRoles = new Set<AuthUser['role']>(['TECHNICIAN', 'SUPERVISOR', 'IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
 const statusLabels: Record<IssueStatus, string> = {
   OPEN: 'Open', IN_REVIEW: 'In review', ASSIGNED: 'Assigned', IN_PROGRESS: 'In progress', RESOLVED: 'Resolved', CLOSED: 'Closed', REOPENED: 'Reopened',
 }
@@ -38,6 +37,7 @@ export function IssueListPage({ user }: { user: AuthUser }) {
   const issuesQuery = useQuery({ queryKey: ['issues', filterKey], queryFn: () => issueQuery(`/issues/${queryString}`) })
   const categoriesQuery = useQuery({ queryKey: ['issue-categories'], queryFn: () => apiRequest<Paginated<IssueCategory>>('/issue-categories/') })
   const operational = canSeeOperations(user.role)
+  const isAdmin = user.role === 'ADMIN'
   const teamsQuery = useQuery({ queryKey: ['teams'], queryFn: () => apiRequest<Paginated<{ id: number; name: string }>>('/teams/'), enabled: operational })
   const categories = categoriesQuery.data?.results ?? []
   const page = Number(params.get('page') ?? '1')
@@ -52,14 +52,16 @@ export function IssueListPage({ user }: { user: AuthUser }) {
   }
 
   return <section className="content-section" aria-labelledby="issue-list-title">
-    <div className="section-heading"><div><h2 id="issue-list-title">Issue register</h2><p>Reports visible to your account, ordered by most recent.</p></div></div>
+    <div className="section-heading"><div><h2 id="issue-list-title">Issue register</h2><p>Reports are ordered by priority, then submission time.</p></div></div>
     <div className="filter-bar" aria-label="Filter issues">
       <label>Status<Select aria-label="Filter by status" value={params.get('status') ?? ''} onChange={(event) => updateFilter('status', event.target.value)}><option value="">All statuses</option>{statuses.map((status) => <option value={status} key={status}>{statusLabels[status]}</option>)}</Select></label>
       <label>Priority<Select aria-label="Filter by priority" value={params.get('priority') ?? ''} onChange={(event) => updateFilter('priority', event.target.value)}><option value="">All priorities</option>{priorities.map((priority) => <option value={priority} key={priority}>{priorityLabels[priority]}</option>)}</Select></label>
       <label>Category<Select aria-label="Filter by category" value={params.get('category') ?? ''} onChange={(event) => updateFilter('category', event.target.value)}><option value="">All categories</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</Select></label>
       {operational && <label>Team<Select aria-label="Filter by team" value={params.get('assigned_team') ?? ''} onChange={(event) => updateFilter('assigned_team', event.target.value)}><option value="">All teams</option>{(teamsQuery.data?.results ?? []).map((team) => <option value={team.id} key={team.id}>{team.name}</option>)}</Select></label>}
       {operational && <label>SLA state<Select aria-label="Filter by SLA state" value={params.get('sla_state') ?? ''} onChange={(event) => updateFilter('sla_state', event.target.value)}><option value="">Any SLA state</option><option value="AT_RISK">At risk</option><option value="BREACHED">Breached</option><option value="COMPLETED">Completed</option><option value="NOT_CONFIGURED">Not configured</option></Select></label>}
-      {operational && <label className="checkbox-filter"><input type="checkbox" checked={params.get('unassigned') === 'true'} onChange={(event) => updateFilter('unassigned', event.target.checked ? 'true' : '')} /> Unassigned only</label>}
+      {isAdmin && <label className="checkbox-filter"><input type="checkbox" checked={params.get('unassigned') === 'true'} onChange={(event) => updateFilter('unassigned', event.target.checked ? 'true' : '')} /> Unassigned only</label>}
+      {isAdmin && <label className="checkbox-filter"><input type="checkbox" checked={params.get('priority_requested') === 'true'} onChange={(event) => updateFilter('priority_requested', event.target.checked ? 'true' : '')} /> Staff priority requests</label>}
+      {isAdmin && <label className="checkbox-filter"><input type="checkbox" checked={params.get('automatically_assigned') === 'true'} onChange={(event) => updateFilter('automatically_assigned', event.target.checked ? 'true' : '')} /> Auto-assigned</label>}
       <label>From date<Input aria-label="Filter from date" type="date" value={params.get('created_after') ?? ''} onChange={(event) => updateFilter('created_after', event.target.value)} /></label>
       <label>To date<Input aria-label="Filter to date" type="date" value={params.get('created_before') ?? ''} onChange={(event) => updateFilter('created_before', event.target.value)} /></label>
     </div>
@@ -85,7 +87,7 @@ export function IssueListPage({ user }: { user: AuthUser }) {
   </section>
 }
 
-export function IssueCreatePage() {
+export function IssueCreatePage({ user }: { user: AuthUser }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
@@ -93,7 +95,8 @@ export function IssueCreatePage() {
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState('')
   const [location, setLocation] = useState('')
-  const [priority, setPriority] = useState<IssuePriority>('MEDIUM')
+  const [requestPriority, setRequestPriority] = useState(false)
+  const [priorityReason, setPriorityReason] = useState('')
   const [asset, setAsset] = useState('')
   const [locationSearch, setLocationSearch] = useState('')
   const [assetSearch, setAssetSearch] = useState('')
@@ -148,7 +151,10 @@ export function IssueCreatePage() {
     data.append('title', title.trim())
     data.append('category', category)
     data.append('location', location)
-    data.append('priority', priority)
+    if (requestPriority && user.role === 'STAFF') {
+      data.append('request_priority', 'true')
+      data.append('priority_reason', priorityReason.trim())
+    }
     data.append('description', description.trim())
     if (asset) data.append('asset', asset)
     if (photo) data.append('photo', photo)
@@ -192,7 +198,7 @@ export function IssueCreatePage() {
             <div className="form-field"><label htmlFor="issue-location-search">Location <span className="required-mark">Required</span></label><Input id="issue-location-search" type="search" value={locationSearch} onChange={(event) => setLocationSearch(event.target.value)} placeholder="Search campus locations" /><Select id="issue-location" value={location} onChange={(event) => setLocation(event.target.value)} required><option value="">Choose a location</option>{locationsQuery.data?.results.map((item) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</Select><small>{locationsQuery.data?.count ?? 0} matching locations</small></div>
           </div>
           <div className="form-row">
-            <div className="form-field"><label htmlFor="issue-priority">Priority</label><Select id="issue-priority" value={priority} onChange={(event) => setPriority(event.target.value as IssuePriority)}>{priorities.map((item) => <option key={item} value={item}>{priorityLabels[item]}</option>)}</Select><small>Choose critical only if there is immediate risk to safety or essential service.</small></div>
+            {user.role === 'STAFF' ? <div className="form-field"><label className="checkbox-filter" htmlFor="request-priority"><input id="request-priority" type="checkbox" checked={requestPriority} onChange={(event) => setRequestPriority(event.target.checked)} /> Request priority handling</label><small>Staff requests are queued as High priority for administrator review. SLA deadlines and routing are unchanged.</small>{requestPriority && <><label htmlFor="priority-reason">Reason <span className="required-mark">Required</span></label><textarea id="priority-reason" className="field text-area" minLength={5} maxLength={500} required value={priorityReason} onChange={(event) => setPriorityReason(event.target.value)} rows={2} /></>}</div> : <div className="form-field"><p className="muted-copy">Priority is assigned through operational policy.</p></div>}
             <div className="form-field"><label htmlFor="issue-asset-search">Related asset <span className="optional-mark">Optional</span></label><Input id="issue-asset-search" type="search" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search by name or asset code" /><Select id="issue-asset" value={asset} onChange={(event) => { const next = event.target.value; setAsset(next); const selected = assetsQuery.data?.results.find((item) => String(item.id) === next); if (selected) { setLocation(String(selected.location)); setLocationSearch(selected.location_name) } }}><option value="">No asset selected</option>{assetsQuery.data?.results.map((item) => <option key={item.id} value={item.id}>{item.asset_code} · {item.name}</option>)}</Select><small>{assetsQuery.data?.count ?? 0} matching assets · selecting an asset sets its registered location.</small></div>
           </div>
           <div className="form-field"><label htmlFor="issue-description">Description <span className="required-mark">Required</span></label><textarea id="issue-description" className="field text-area" name="description" value={description} onChange={(event) => setDescription(event.target.value)} minLength={10} maxLength={5000} rows={4} required placeholder="Add details that will help someone locate and understand the problem." /><small>Include useful details such as when it started or what you observed.</small></div>
@@ -205,13 +211,17 @@ export function IssueCreatePage() {
 const transitions: Partial<Record<IssueStatus, IssueStatus[]>> = {
   OPEN: ['IN_REVIEW'], IN_REVIEW: ['ASSIGNED'], ASSIGNED: ['IN_PROGRESS'], IN_PROGRESS: ['RESOLVED'], RESOLVED: ['CLOSED', 'REOPENED'], CLOSED: ['REOPENED'], REOPENED: ['IN_REVIEW'],
 }
-const managers = new Set<AuthUser['role']>(['CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
-const issueManagementRoles = new Set<AuthUser['role']>(['FACILITY_MANAGER', 'IT_MANAGER', 'DEPARTMENT_HEAD', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
+const issueManagementRoles = new Set<AuthUser['role']>(['ADMIN'])
 
 export function IssueDetailPage({ user }: { user: AuthUser }) {
   const { id = '' } = useParams()
   const queryClient = useQueryClient()
+  const [priorityValue, setPriorityValue] = useState<IssuePriority>('MEDIUM')
+  const [priorityChangeReason, setPriorityChangeReason] = useState('')
   const issueQuery = useQuery({ queryKey: ['issue', id], queryFn: () => apiRequest<IssueRecord>(`/issues/${id}/`) })
+  useEffect(() => {
+    if (issueQuery.data) setPriorityValue(issueQuery.data.priority)
+  }, [issueQuery.data])
   const statusUpdate = useMutation({
     mutationFn: (nextStatus: IssueStatus) => apiRequest<IssueRecord>(`/issues/${id}/status/`, { method: 'POST', body: JSON.stringify({ status: nextStatus }) }),
     onSuccess: (issue) => {
@@ -219,16 +229,20 @@ export function IssueDetailPage({ user }: { user: AuthUser }) {
       queryClient.invalidateQueries({ queryKey: ['issues'] })
     },
   })
+  const priorityUpdate = useMutation({
+    mutationFn: () => apiRequest<IssueRecord>(`/issues/${id}/priority/`, { method: 'POST', body: JSON.stringify({ priority: priorityValue, reason: priorityChangeReason }) }),
+    onSuccess: (issue) => { queryClient.setQueryData(['issue', id], issue); void queryClient.invalidateQueries({ queryKey: ['issues'] }) },
+  })
 
   if (issueQuery.isPending) return <div className="state-panel"><Loading label="Loading issue" /></div>
   if (issueQuery.isError) return <ErrorState title="Issue could not be loaded" detail={friendlyError(issueQuery.error)} onRetry={() => { void issueQuery.refetch() }} />
   const issue = issueQuery.data
   const canUpdate = issueManagementRoles.has(user.role)
-    || (user.role === 'TECHNICIAN' && issue.assigned_to === user.id)
-    || (user.role === 'SUPERVISOR' && issue.assigned_team !== null && user.team_ids.includes(issue.assigned_team))
+    || (user.role === 'TECHNICAL_STAFF' && issue.assigned_to === user.id)
+    || user.role === 'ADMIN'
   const availableTransitions = transitions[issue.status] ?? []
   const nextStatuses = canUpdate
-    ? user.role === 'TECHNICIAN' ? availableTransitions.filter((status) => status === 'IN_PROGRESS') : availableTransitions
+    ? user.role === 'TECHNICAL_STAFF' ? availableTransitions.filter((status) => status === 'IN_PROGRESS') : availableTransitions
     : []
 
   return <section className="issue-detail-layout">
@@ -239,10 +253,44 @@ export function IssueDetailPage({ user }: { user: AuthUser }) {
       <section className="detail-section"><h3>Description</h3><p className="issue-description">{issue.description}</p></section>
       <section className="detail-section"><h3>Photos</h3>{issue.attachments?.length ? <div className="attachment-grid">{issue.attachments.map((attachment) => <figure key={attachment.id}><a href={attachment.file_url} target="_blank" rel="noreferrer"><img src={attachment.file_url} alt={`Attachment uploaded by ${attachment.uploaded_by_name}`} /></a><figcaption>{attachment.uploaded_by_name} · {formatDate(attachment.created_at)}</figcaption></figure>)}</div> : <p className="muted-copy">No photos were attached.</p>}</section>
       <section className="detail-section"><h3>Record history</h3>{issue.events?.length ? <ol className="timeline">{issue.events.map((event) => <li key={event.id}><span className="timeline-dot" aria-hidden="true" /><div><strong>{event.from_status ? `${statusLabels[event.from_status]} → ${statusLabels[event.to_status]}` : `Issue ${statusLabels[event.to_status].toLowerCase()}`}</strong><p>{event.note || 'Status updated'}{event.actor_name ? ` · ${event.actor_name}` : ''}</p><time dateTime={event.created_at}>{formatDate(event.created_at)}</time></div></li>)}</ol> : <p className="muted-copy">No history events are recorded.</p>}</section>
-      {networkReaderRoles.has(user.role) && <IssueNetworkEvidence issueId={issue.id} />}
+      {(user.role === 'ADMIN' || (user.role === 'TECHNICAL_STAFF' && ['network', 'it support'].includes(user.technical_specialization.trim().toLowerCase()))) && <IssueNetworkEvidence issueId={issue.id} />}
       <IssueWorkOrdersSection issueId={issue.id} assignedTeam={issue.assigned_team} user={user} />
     </div>
-    <aside className="detail-aside" aria-label="Issue information"><h3>Issue information</h3><Info label="Category" value={issue.category.name} /><Info label="Location" value={issue.location_name} /><Info label="Priority" value={priorityLabels[issue.priority]} /><Info label="Related asset" value={issue.asset_name ?? 'None'} /><Info label="Reported by" value={issue.reporter_name ?? (issue.reporter === user.id ? 'You' : 'Not available')} />{canSeeOperations(user.role) && <><Info label="Assigned team" value={issue.assigned_team_name ?? 'Not assigned'} /><Info label="Assigned to" value={issue.assigned_to_name ?? 'Not assigned'} /><SlaPanel issue={issue} />{issue.assignment_history?.length ? <section className="assignment-history"><h4>Assignment history</h4>{issue.assignment_history.map((item, index) => <p key={`${item.created_at}-${index}`}><strong>{item.team ?? 'Unassigned'}</strong> · {item.reason}{item.rule ? ` · Rule: ${item.rule}` : ''}</p>)}</section> : null}{(user.role === 'SUPERVISOR' || managers.has(user.role)) && <AssignmentForm issue={issue} />}</>}<Info label="Created" value={formatDate(issue.created_at)} /><Info label="Updated" value={formatDate(issue.updated_at)} />{issue.resolved_at && <Info label="Resolved" value={formatDate(issue.resolved_at)} />}{issue.closed_at && <Info label="Closed" value={formatDate(issue.closed_at)} />}</aside>
+    <aside className="detail-aside" aria-label="Issue information">
+      <h3>Issue information</h3>
+      <Info label="Category" value={issue.category.name} />
+      <Info label="Location" value={issue.location_name} />
+      <Info label="Priority" value={priorityLabels[issue.priority]} />
+      <Info label="Related asset" value={issue.asset_name ?? 'None'} />
+      <Info label="Reported by" value={issue.reporter_name ?? (issue.reporter === user.id ? 'You' : 'Not available')} />
+      {user.role === 'ADMIN' && (
+        <section className="assignment-form">
+          <h4>Priority review</h4>
+          {issue.priority_requested_at ? <p>Requested by {issue.priority_requested_by_name ?? 'staff'} on {formatDate(issue.priority_requested_at)}: {issue.priority_request_reason}</p> : <p>No staff priority request.</p>}
+          <label htmlFor="admin-priority">Set priority</label>
+          <Select id="admin-priority" value={priorityValue} onChange={(event) => setPriorityValue(event.target.value as IssuePriority)}>
+            {priorities.map((priority) => <option key={priority} value={priority}>{priorityLabels[priority]}</option>)}
+          </Select>
+          <label htmlFor="admin-priority-reason">Review reason</label>
+          <Input id="admin-priority-reason" value={priorityChangeReason} minLength={5} maxLength={500} required onChange={(event) => setPriorityChangeReason(event.target.value)} />
+          {priorityUpdate.isError && <p className="form-error" role="alert">{friendlyError(priorityUpdate.error)}</p>}
+          {priorityUpdate.isSuccess && <p role="status">Priority updated and recorded.</p>}
+          <Button variant="primary" onClick={() => priorityUpdate.mutate()} disabled={priorityUpdate.isPending}>{priorityUpdate.isPending ? 'Saving…' : 'Save priority'}</Button>
+          {issue.priority_history?.length ? <ol>{issue.priority_history.map((entry, index) => <li key={`${entry.created_at}-${index}`}>{priorityLabels[entry.old_priority]} → {priorityLabels[entry.new_priority]} · {entry.reason} · {entry.actor ?? 'Former user'}</li>)}</ol> : null}
+        </section>
+      )}
+      {canSeeOperations(user.role) && <>
+        <Info label="Assigned team" value={issue.assigned_team_name ?? 'Not assigned'} />
+        <Info label="Assigned to" value={issue.assigned_to_name ?? 'Not assigned'} />
+        <SlaPanel issue={issue} />
+        {issue.assignment_history?.length ? <section className="assignment-history"><h4>Assignment history</h4>{issue.assignment_history.map((item, index) => <p key={`${item.created_at}-${index}`}><strong>{item.team ?? 'Unassigned'}</strong> · {item.reason}{item.rule ? ` · Rule: ${item.rule}` : ''}</p>)}</section> : null}
+        {user.role === 'ADMIN' && <AssignmentForm issue={issue} />}
+      </>}
+      <Info label="Created" value={formatDate(issue.created_at)} />
+      <Info label="Updated" value={formatDate(issue.updated_at)} />
+      {issue.resolved_at && <Info label="Resolved" value={formatDate(issue.resolved_at)} />}
+      {issue.closed_at && <Info label="Closed" value={formatDate(issue.closed_at)} />}
+    </aside>
   </section>
 }
 
@@ -251,7 +299,7 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 function canSeeOperations(role: AuthUser['role']) {
-  return role === 'TECHNICIAN' || role === 'SUPERVISOR' || issueManagementRoles.has(role)
+  return role === 'TECHNICAL_STAFF' || role === 'ADMIN'
 }
 
 function NetworkEvidenceSummary({ evaluation }: { evaluation: NetworkQualityEvaluation }) {
@@ -314,10 +362,13 @@ function SlaPanel({ issue }: { issue: IssueRecord }) {
 
 function AssignmentForm({ issue }: { issue: IssueRecord }) {
   const cache = useQueryClient()
+  const [teamId, setTeamId] = useState(issue.assigned_team ? String(issue.assigned_team) : '')
+  const [technicianId, setTechnicianId] = useState(issue.assigned_to ? String(issue.assigned_to) : '')
   const teams = useQuery({ queryKey: ['teams'], queryFn: () => apiRequest<Paginated<{ id: number; name: string; is_active: boolean }>>('/teams/') })
-  const mutation = useMutation({ mutationFn: (body: { team: number; reason: string }) => apiRequest(`/issues/${issue.id}/assign/`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: () => { void cache.invalidateQueries({ queryKey: ['issue', String(issue.id)] }); void cache.invalidateQueries({ queryKey: ['issues'] }) } })
-  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); mutation.mutate({ team: Number(data.get('team')), reason: String(data.get('reason')) }) }
+  const technicians = useQuery({ queryKey: ['eligible-technicians', teamId], queryFn: () => apiRequest<{ id: number; full_name: string; email: string }[]>(`/work-orders/technicians/?team=${teamId}`), enabled: Boolean(teamId) })
+  const mutation = useMutation({ mutationFn: (body: { team: number; user: number; reason: string }) => apiRequest(`/issues/${issue.id}/assign/`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: () => { void cache.invalidateQueries({ queryKey: ['issue', String(issue.id)] }); void cache.invalidateQueries({ queryKey: ['issues'] }) } })
+  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); mutation.mutate({ team: Number(teamId), user: Number(technicianId), reason: String(data.get('reason')) }) }
   if (teams.isPending) return <Loading label="Loading teams for assignment" />
   if (teams.isError) return <ErrorState title="Teams could not be loaded" detail={friendlyError(teams.error)} onRetry={() => { void teams.refetch() }} />
-  return <form className="assignment-form" onSubmit={submit}><h4>Reassign team</h4><label>Team<Select name="team" defaultValue={issue.assigned_team ?? ''} required><option value="">Select team</option>{(teams.data.results ?? []).filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select></label><label>Reason<Input name="reason" minLength={3} maxLength={500} required /></label>{mutation.isError && <p className="form-error" role="alert">{friendlyError(mutation.error)}</p>}{mutation.isSuccess && <p role="status">Assignment updated.</p>}<Button variant="primary" type="submit" disabled={mutation.isPending}>{mutation.isPending ? 'Assigning…' : 'Assign team'}</Button></form>
+  return <form className="assignment-form" onSubmit={submit}><h4>Assign / reassign technical staff</h4><label>Team<Select name="team" value={teamId} onChange={(event) => { setTeamId(event.target.value); setTechnicianId('') }} required><option value="">Select team</option>{(teams.data.results ?? []).filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select></label><label>Active technical staff<Select name="technician" value={technicianId} onChange={(event) => setTechnicianId(event.target.value)} disabled={!technicians.data?.length} required><option value="">Select a technician</option>{(technicians.data ?? []).map((person) => <option key={person.id} value={person.id}>{person.full_name} · {person.email}</option>)}</Select></label>{technicians.isError && <p className="form-error" role="alert">{friendlyError(technicians.error)}</p>}{technicians.data?.length === 0 && <p className="muted-copy">No active technical staff are assigned to this team.</p>}<label>Reason<Input name="reason" minLength={3} maxLength={500} required /></label>{mutation.isError && <p className="form-error" role="alert">{friendlyError(mutation.error)}</p>}{mutation.isSuccess && <p role="status">Assignment updated.</p>}<Button variant="primary" type="submit" disabled={mutation.isPending || !technicianId}>{mutation.isPending ? 'Assigning…' : 'Save assignment'}</Button></form>
 }

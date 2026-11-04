@@ -27,12 +27,12 @@ class WorkOrderWorkflowTests(TestCase):
         self.other_team = Team.objects.create(name="Other Team")
         self.student = User.objects.create_user("student@tests.test", "Student", "password123456", role=UserRole.STUDENT)
         self.staff = User.objects.create_user("staff@tests.test", "Staff", "password123456", role=UserRole.STAFF)
-        self.tech = User.objects.create_user("tech@tests.test", "Technician", "password123456", role=UserRole.TECHNICIAN)
-        self.other_tech = User.objects.create_user("other-tech@tests.test", "Other technician", "password123456", role=UserRole.TECHNICIAN)
-        self.supervisor = User.objects.create_user("supervisor@tests.test", "Supervisor", "password123456", role=UserRole.SUPERVISOR)
-        self.outside_supervisor = User.objects.create_user("outside@tests.test", "Outside supervisor", "password123456", role=UserRole.SUPERVISOR)
-        self.manager = User.objects.create_user("manager@tests.test", "Facilities manager", "password123456", role=UserRole.FACILITY_MANAGER)
-        self.admin = User.objects.create_user("admin@tests.test", "Campus admin", "password123456", role=UserRole.CAMPUS_ADMIN)
+        self.tech = User.objects.create_user("tech@tests.test", "Technician", "password123456", role=UserRole.TECHNICAL_STAFF)
+        self.other_tech = User.objects.create_user("other-tech@tests.test", "Other technician", "password123456", role=UserRole.TECHNICAL_STAFF)
+        self.supervisor = User.objects.create_user("supervisor@tests.test", "Supervisor", "password123456", role=UserRole.ADMIN)
+        self.outside_supervisor = User.objects.create_user("outside@tests.test", "Outside supervisor", "password123456", role=UserRole.ADMIN)
+        self.manager = User.objects.create_user("manager@tests.test", "Facilities manager", "password123456", role=UserRole.ADMIN)
+        self.admin = User.objects.create_user("admin@tests.test", "Campus admin", "password123456", role=UserRole.ADMIN)
         self.team.members.add(self.tech, self.supervisor)
         self.other_team.members.add(self.other_tech, self.outside_supervisor)
         self.issue = Issue.objects.create(
@@ -83,17 +83,17 @@ class WorkOrderWorkflowTests(TestCase):
         self.assertEqual(self.client.get("/api/work-orders/").data["count"], 0)
         self.assertEqual(self.client.get(f"/api/work-orders/{work_order.pk}/").status_code, 404)
 
-    def test_supervisor_scope_and_assignment_validation(self):
+    def test_admin_global_scope_and_assignment_validation(self):
         work_order = self.create_work_order()
         wrong_team = self.assign(work_order, team=self.other_team, technician=self.other_tech)
-        self.assertEqual(wrong_team.status_code, 403)
+        self.assertEqual(wrong_team.status_code, 200)
         wrong_member = self.assign(work_order, technician=self.other_tech)
         self.assertEqual(wrong_member.status_code, 400)
         wrong_role = self.assign(work_order, technician=self.staff)
         self.assertEqual(wrong_role.status_code, 400)
         self.login(self.outside_supervisor)
-        self.assertEqual(self.client.get(f"/api/work-orders/{work_order.pk}/").status_code, 404)
-        self.assertEqual(self.client.post(f"/api/work-orders/{work_order.pk}/assign/", {"team": self.other_team.pk, "technician": self.other_tech.pk, "reason": "Out of scope"}, format="json").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/work-orders/{work_order.pk}/").status_code, 200)
+        self.assertEqual(self.client.post(f"/api/work-orders/{work_order.pk}/assign/", {"team": self.team.pk, "technician": self.tech.pk, "reason": "Admin reassigns across teams"}, format="json").status_code, 200)
 
     def test_technician_accept_start_notes_materials_and_completion(self):
         work_order = self.create_work_order()

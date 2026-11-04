@@ -30,7 +30,7 @@ class NetworkAnalyticsTests(TestCase):
         self.other_campus_network = Network.objects.create(campus=self.other_campus, code="analytics-wan", name="Synthetic Analytics WAN", kind=Network.Kind.WAN)
         self.device = NetworkDevice.objects.create(device_code="ANALYTICS-AP-1", name="Analytics Access Point", kind=NetworkDevice.Kind.ACCESS_POINT, network=self.network, location=self.location)
         self.other_device = NetworkDevice.objects.create(device_code="ANALYTICS-SW-1", name="Analytics Switch", kind=NetworkDevice.Kind.SWITCH, network=self.other_network, location=self.other_location)
-        self.tech = User.objects.create_user("analytics-tech@example.test", "Analytics Tech", "test-password-123", role=UserRole.TECHNICIAN)
+        self.tech = User.objects.create_user("analytics-tech@example.test", "Analytics Tech", "test-password-123", role=UserRole.TECHNICAL_STAFF, technical_specialization="Network")
         self.student = User.objects.create_user("analytics-student@example.test", "Analytics Student", "test-password-123", role=UserRole.STUDENT)
         self.client = APIClient()
         self.measurements = []

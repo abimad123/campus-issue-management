@@ -95,10 +95,11 @@ class NetworkApiTests(APITestCase):
         self.device = NetworkDevice.objects.create(device_code="NET-TEST-DEVICE", name="Synthetic Lab AP", kind=NetworkDevice.Kind.ACCESS_POINT, network=self.network, location=self.location, asset=self.asset)
         self.student = User.objects.create_user("network-student@example.test", "Network Student", "test-password-123", role=UserRole.STUDENT)
         self.staff = User.objects.create_user("network-staff@example.test", "Network Staff", "test-password-123", role=UserRole.STAFF)
-        self.tech = User.objects.create_user("network-tech@example.test", "Network Technician", "test-password-123", role=UserRole.TECHNICIAN)
-        self.supervisor = User.objects.create_user("network-supervisor@example.test", "Network Supervisor", "test-password-123", role=UserRole.SUPERVISOR)
-        self.it_manager = User.objects.create_user("network-it@example.test", "Network IT Manager", "test-password-123", role=UserRole.IT_MANAGER)
-        self.admin = User.objects.create_user("network-admin@example.test", "Network Admin", "test-password-123", role=UserRole.CAMPUS_ADMIN)
+        self.tech = User.objects.create_user("network-tech@example.test", "Network Technician", "test-password-123", role=UserRole.TECHNICAL_STAFF, technical_specialization="Network")
+        self.facilities_tech = User.objects.create_user("facilities-tech@example.test", "Facilities Technician", "test-password-123", role=UserRole.TECHNICAL_STAFF, technical_specialization="Electrical")
+        self.supervisor = User.objects.create_user("network-supervisor@example.test", "Network Supervisor", "test-password-123", role=UserRole.ADMIN)
+        self.it_manager = User.objects.create_user("network-it@example.test", "Network IT Manager", "test-password-123", role=UserRole.ADMIN)
+        self.admin = User.objects.create_user("network-admin@example.test", "Network Admin", "test-password-123", role=UserRole.ADMIN)
 
     def test_inventory_requires_auth_and_role_scope(self):
         self.assertEqual(self.client.get(reverse("network-device-list")).status_code, 401)
@@ -199,7 +200,6 @@ class NetworkApiTests(APITestCase):
             "description": "Wireless access drops repeatedly in the computer lab during classes.",
             "category": category.pk,
             "location": self.location.pk,
-            "priority": "HIGH",
             **values,
         }
 
@@ -309,7 +309,7 @@ class NetworkApiTests(APITestCase):
         denied = self.client.post(reverse("issue-status", args=[issue.pk]), {"status": Issue.Status.RESOLVED}, format="json")
         self.assertEqual(denied.status_code, 403)
 
-    def test_context_actions_reject_roles_without_network_access(self):
+    def test_context_actions_reject_users_without_network_access(self):
         category = IssueCategory.objects.create(name="Network")
         issue = Issue.objects.create(
             title="Student network report",
@@ -319,9 +319,7 @@ class NetworkApiTests(APITestCase):
             reporter=self.student,
         )
         measurement = self.make_measurement()
-        facility_manager = User.objects.create_user("facility@example.test", "Facility Manager", "test-password-123", role=UserRole.FACILITY_MANAGER)
-        department_head = User.objects.create_user("head@example.test", "Department Head", "test-password-123", role=UserRole.DEPARTMENT_HEAD)
-        for user in (self.student, self.staff, facility_manager, department_head):
+        for user in (self.student, self.staff, self.facilities_tech):
             with self.subTest(role=user.role):
                 self.client.force_authenticate(user)
                 self.assertEqual(self.client.get(reverse("network-measurement-evaluation", args=[measurement.pk])).status_code, 403)
@@ -329,7 +327,7 @@ class NetworkApiTests(APITestCase):
                 self.assertEqual(self.client.post(reverse("issue-network-context", args=[issue.pk]), {"network_measurement": measurement.pk}, format="json").status_code, 403)
                 self.assertEqual(self.client.get(reverse("issue-network-context", args=[issue.pk])).status_code, 403)
 
-    def test_supervisor_scope_and_technician_object_permission_are_preserved(self):
+    def test_admin_global_scope_and_technician_object_permission_are_preserved(self):
         category = IssueCategory.objects.create(name="Network")
         measurement = self.make_measurement()
         own_team = Team.objects.create(name="Supervisor's network team")
@@ -356,7 +354,7 @@ class NetworkApiTests(APITestCase):
         self.client.force_authenticate(self.supervisor)
         accepted = self.client.post(reverse("issue-network-context", args=[own_issue.pk]), {"network_measurement": measurement.pk}, format="json")
         self.assertEqual(accepted.status_code, 201, accepted.data)
-        self.assertEqual(self.client.post(reverse("issue-network-context", args=[foreign_issue.pk]), {"network_measurement": measurement.pk}, format="json").status_code, 404)
+        self.assertEqual(self.client.post(reverse("issue-network-context", args=[foreign_issue.pk]), {"network_measurement": measurement.pk}, format="json").status_code, 201)
 
         assigned_issue = Issue.objects.create(
             title="Technician issue",

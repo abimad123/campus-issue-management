@@ -21,5 +21,5 @@ class RoutingRuleSerializer(serializers.ModelSerializer):
 
 class ManualAssignmentSerializer(serializers.Serializer):
     team = serializers.IntegerField()
-    user = serializers.IntegerField(required=False, allow_null=True)
+    user = serializers.IntegerField()
     reason = serializers.CharField(max_length=500, min_length=3)

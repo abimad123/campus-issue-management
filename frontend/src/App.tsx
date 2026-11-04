@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -12,15 +12,19 @@ import LoginPage from './features/auth/LoginPage'
 import NotificationsPage from './features/notifications/NotificationsPage'
 import { NetworkDeviceDetailPage, NetworkDevicesPage, NetworkMeasurementEvaluationPage, NetworkMeasurementsPage, NetworksPage } from './features/network/NetworkPages'
 import NetworkQualityPage from './features/network/NetworkQualityPage'
+const LandingPage = lazy(() => import('./features/landing/LandingPage'))
+
+function LandingPageRoute() {
+  return <Suspense fallback={<main className="full-state"><Loading label="Loading CampusOps" /></main>}><LandingPage /></Suspense>
+}
 import { ApiError, apiRequest } from './lib/api'
 import type { AuthUser } from './types/api'
 
 type NavigationItem = { label: string; path: string; icon: string; end?: boolean }
-const adminRoles = new Set<AuthUser['role']>(['CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
-const assetRoles = new Set<AuthUser['role']>(['FACILITY_MANAGER', 'IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
-const workOrderRoles = new Set<AuthUser['role']>(['TECHNICIAN', 'SUPERVISOR', 'FACILITY_MANAGER', 'IT_MANAGER', 'DEPARTMENT_HEAD', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
-const networkRoles = new Set<AuthUser['role']>(['TECHNICIAN', 'SUPERVISOR', 'IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
-const networkManagementRoles = new Set<AuthUser['role']>(['IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
+const adminRoles = new Set<AuthUser['role']>(['ADMIN'])
+const assetRoles = new Set<AuthUser['role']>(['ADMIN'])
+const workOrderRoles = new Set<AuthUser['role']>(['TECHNICAL_STAFF', 'ADMIN'])
+const networkManagementRoles = new Set<AuthUser['role']>(['ADMIN'])
 const adminUrl = `${new URL(import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api').origin}/admin/`
 
 function navigationFor(user: AuthUser): NavigationItem[] {
@@ -31,7 +35,7 @@ function navigationFor(user: AuthUser): NavigationItem[] {
   ]
   if (assetRoles.has(user.role)) items.push({ label: 'Asset register', path: '/assets', icon: '◇' })
   if (workOrderRoles.has(user.role)) items.push({ label: 'Work orders', path: '/work-orders', icon: '▤', end: true })
-  if (networkRoles.has(user.role)) {
+  if (canAccessNetwork(user)) {
     items.push({ label: 'Network devices', path: '/network/devices', icon: '⌁' })
     items.push({ label: 'Networks', path: '/network/networks', icon: '◌' })
     items.push({ label: 'Measurements', path: '/network/measurements', icon: '↕' })
@@ -45,6 +49,14 @@ function navigationFor(user: AuthUser): NavigationItem[] {
   items.push({ label: 'Notifications', path: '/notifications', icon: '◉' })
   items.push({ label: 'Profile', path: '/profile', icon: '○' })
   return items
+}
+
+function canAccessNetwork(user: AuthUser) {
+  return user.role === 'ADMIN' || (user.role === 'TECHNICAL_STAFF' && ['network', 'it support'].includes(user.technical_specialization.trim().toLowerCase()))
+}
+
+function networkRolesFor(user: AuthUser) {
+  return new Set<AuthUser['role']>(canAccessNetwork(user) ? ['TECHNICAL_STAFF', 'ADMIN'] : [])
 }
 
 export default function App() {
@@ -61,11 +73,12 @@ export default function App() {
     return () => window.removeEventListener('campus:session-expired', expireSession)
   }, [queryClient])
 
+  if (!auth.data && location.pathname === '/') return <LandingPageRoute />
   if (auth.isPending) return <main className="full-state"><Loading label="Checking your session" /></main>
   if (auth.isError && !(auth.error instanceof ApiError && [401, 403].includes(auth.error.status))) {
     return <main className="full-state"><ErrorState title="Campus Operations could not connect" detail="Check that the API is running, then reload this page." /></main>
   }
-  if (!auth.data) return <Routes><Route path="/login" element={<LoginPage />} /><Route path="*" element={<Navigate to="/login" replace state={{ from: location.pathname }} />} /></Routes>
+  if (!auth.data) return <Routes><Route path="/" element={<LandingPageRoute />} /><Route path="/login" element={<LoginPage />} /><Route path="*" element={<Navigate to="/login" replace state={{ from: location.pathname }} />} /></Routes>
   return <AuthenticatedApp user={auth.data} />
 }
 
@@ -123,7 +136,7 @@ function AuthenticatedApp({ user }: { user: AuthUser }) {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage user={user} />} />
           <Route path="/issues" element={<IssueListPage user={user} />} />
-          <Route path="/issues/new" element={<IssueCreatePage />} />
+          <Route path="/issues/new" element={<IssueCreatePage user={user} />} />
           <Route path="/issues/:id" element={<IssueDetailPage user={user} />} />
           <Route path="/profile" element={<ProfilePage user={user} />} />
           <Route path="/notifications" element={<NotificationsPage />} />
@@ -132,12 +145,12 @@ function AuthenticatedApp({ user }: { user: AuthUser }) {
           <Route path="/network/coverage" element={<Navigate to="/dashboard" replace />} />
           <Route path="/work-orders" element={<RoleGate allowed={workOrderRoles} role={user.role}><WorkOrderListPage user={user} /></RoleGate>} />
           <Route path="/work-orders/:id" element={<RoleGate allowed={workOrderRoles} role={user.role}><WorkOrderDetailPage user={user} /></RoleGate>} />
-          <Route path="/network/devices" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkDevicesPage canManage={networkManagementRoles.has(user.role)} /></RoleGate>} />
-          <Route path="/network/devices/:id" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkDeviceDetailPage /></RoleGate>} />
-          <Route path="/network/networks" element={<RoleGate allowed={networkRoles} role={user.role}><NetworksPage canManage={networkManagementRoles.has(user.role)} /></RoleGate>} />
-          <Route path="/network/measurements/:id" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkMeasurementEvaluationPage user={user} /></RoleGate>} />
-          <Route path="/network/measurements" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkMeasurementsPage /></RoleGate>} />
-          <Route path="/network-quality" element={<RoleGate allowed={networkRoles} role={user.role}><NetworkQualityPage /></RoleGate>} />
+          <Route path="/network/devices" element={<RoleGate allowed={networkRolesFor(user)} role={user.role}><NetworkDevicesPage canManage={networkManagementRoles.has(user.role)} /></RoleGate>} />
+          <Route path="/network/devices/:id" element={<RoleGate allowed={networkRolesFor(user)} role={user.role}><NetworkDeviceDetailPage /></RoleGate>} />
+          <Route path="/network/networks" element={<RoleGate allowed={networkRolesFor(user)} role={user.role}><NetworksPage canManage={networkManagementRoles.has(user.role)} /></RoleGate>} />
+          <Route path="/network/measurements/:id" element={<RoleGate allowed={networkRolesFor(user)} role={user.role}><NetworkMeasurementEvaluationPage user={user} /></RoleGate>} />
+          <Route path="/network/measurements" element={<RoleGate allowed={networkRolesFor(user)} role={user.role}><NetworkMeasurementsPage /></RoleGate>} />
+          <Route path="/network-quality" element={<RoleGate allowed={networkRolesFor(user)} role={user.role}><NetworkQualityPage /></RoleGate>} />
           <Route path="/assets" element={<RoleGate allowed={assetRoles} role={user.role}><AssetsPage /></RoleGate>} />
           <Route path="/analytics" element={<Navigate to="/dashboard" replace />} />
           <Route path="/reports" element={<Navigate to="/dashboard" replace />} />
@@ -155,9 +168,7 @@ function AuthenticatedApp({ user }: { user: AuthUser }) {
 function pageFor(path: string, role: AuthUser['role']) {
   if (path === '/dashboard' || path === '/') {
     const titles: Record<AuthUser['role'], string> = {
-      STUDENT: 'My requests', STAFF: 'My service requests', TECHNICIAN: 'Field operations', SUPERVISOR: 'Team overview',
-      FACILITY_MANAGER: 'Facilities overview', IT_MANAGER: 'IT operations', DEPARTMENT_HEAD: 'Department overview',
-      CAMPUS_ADMIN: 'Campus operations', SYSTEM_ADMIN: 'Platform overview',
+      STUDENT: 'My requests', STAFF: 'My service requests', TECHNICAL_STAFF: 'Technical staff workspace', ADMIN: 'Campus administration',
     }
     return { title: titles[role], description: 'A current view of issues visible to your account.' }
   }
@@ -175,14 +186,14 @@ function pageFor(path: string, role: AuthUser['role']) {
   if (path === '/work-orders') return { title: 'Work orders', description: 'Field work and maintenance coordination.' }
   if (/^\/work-orders\/[^/]+$/.test(path)) return { title: 'Work-order details', description: 'Coordinate field work, evidence, and supervisor verification.' }
   if (path === '/assets') return { title: 'Assets', description: 'Registered equipment and its campus location.' }
-  if (path === '/admin') return { title: 'Administration', description: 'Development access to reference data and accounts.' }
+  if (path === '/admin') return { title: 'Administration', description: 'Review users, campus issues, priority requests, assignments, SLAs, work orders and network operations.' }
   if (path === '/admin/routing-rules') return { title: 'Routing rules', description: 'Configure how issue categories, locations, and priority route to operational teams.' }
   if (path === '/admin/sla-policies') return { title: 'SLA policies', description: 'Set response, resolution, warning, and escalation targets.' }
   return { title: 'Campus Operations', description: 'Campus issue management workspace.' }
 }
 
 function ProfilePage({ user }: { user: AuthUser }) {
-  return <section className="profile-card"><div className="profile-large-avatar" aria-hidden="true">{user.full_name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</div><div><h2>{user.full_name}</h2><p>{user.role.replace(/_/g, ' ')}</p></div><dl><div><dt>Email</dt><dd>{user.email}</dd></div><div><dt>Phone</dt><dd>{user.phone_number || 'Not provided'}</dd></div><div><dt>Member since</dt><dd>{new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(user.date_joined))}</dd></div></dl></section>
+  return <section className="profile-card"><div className="profile-large-avatar" aria-hidden="true">{user.full_name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</div><div><h2>{user.full_name}</h2><p>{user.role.replace(/_/g, ' ')}</p></div><dl>{user.institutional_id && <div><dt>Institutional ID</dt><dd>{user.institutional_id}</dd></div>}{user.technical_specialization && <div><dt>Specialization</dt><dd>{user.technical_specialization}</dd></div>}<div><dt>Email</dt><dd>{user.email}</dd></div><div><dt>Phone</dt><dd>{user.phone_number || 'Not provided'}</dd></div><div><dt>Member since</dt><dd>{new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(user.date_joined))}</dd></div></dl></section>
 }
 
 function RoleGate({ allowed, role, children }: { allowed: Set<AuthUser['role']>; role: AuthUser['role']; children: ReactNode }) {
@@ -191,7 +202,18 @@ function RoleGate({ allowed, role, children }: { allowed: Set<AuthUser['role']>;
 }
 
 function AdminHome() {
-  return <div className="admin-shortcuts"><Link className="panel" to="/admin/routing-rules"><h2>Routing rules</h2><p>Configure category, location and priority routing to teams.</p></Link><Link className="panel" to="/admin/sla-policies"><h2>SLA policies</h2><p>Manage response, resolution and escalation thresholds.</p></Link><a className="panel" href={adminUrl}><h2>Reference data</h2><p>Manage accounts and campus reference records in Django Admin.</p></a></div>
+  const users = useQuery({ queryKey: ['admin-user-summary'], queryFn: () => apiRequest<{ user_counts: Record<string, number>; technical_staff: { id: number; full_name: string; institutional_id: string | null; technical_specialization: string; teams: string[]; is_active: boolean }[] }>('/auth/admin/summary/') })
+  const issues = useQuery({ queryKey: ['admin-issue-summary'], queryFn: () => apiRequest<{ open: number; assigned: number; at_risk: number; breached: number; unassigned: number; priority_requests: number; automatically_assigned: number }>('/issues/summary/') })
+  return <div className="admin-overview">
+    {users.isPending || issues.isPending ? <div className="state-panel"><Loading label="Loading campus operations summary" /></div>
+      : users.isError || issues.isError ? <ErrorState title="Administration summary could not be loaded" detail="Try again after checking the API connection." onRetry={() => { void users.refetch(); void issues.refetch() }} />
+        : <>
+          <section className="metric-grid" aria-label="Users by role">{Object.entries(users.data.user_counts).map(([role, count]) => <div className="metric-card" key={role}><span>{role.replace(/_/g, ' ')}</span><strong>{count}</strong></div>)}</section>
+          <section className="metric-grid" aria-label="Campus issue operations"><Link to="/issues?unassigned=true" className="metric-card"><span>Unassigned issues</span><strong>{issues.data.unassigned}</strong></Link><Link to="/issues?priority_requested=true" className="metric-card"><span>Staff priority requests</span><strong>{issues.data.priority_requests}</strong></Link><Link to="/issues?automatically_assigned=true" className="metric-card"><span>Automatically assigned</span><strong>{issues.data.automatically_assigned}</strong></Link><div className="metric-card"><span>SLA warnings / breaches</span><strong>{issues.data.at_risk} / {issues.data.breached}</strong></div></section>
+          <section className="panel"><h2>Technical staff and specializations</h2>{users.data.technical_staff.length ? <div className="table-scroll"><table className="issue-table"><thead><tr><th>Name</th><th>Employee ID</th><th>Specialization</th><th>Teams</th><th>Status</th></tr></thead><tbody>{users.data.technical_staff.map((member) => <tr key={member.id}><td>{member.full_name}</td><td>{member.institutional_id ?? 'Not configured'}</td><td>{member.technical_specialization || 'Not configured'}</td><td>{member.teams.join(', ') || 'No team'}</td><td>{member.is_active ? 'Active' : 'Inactive'}</td></tr>)}</tbody></table></div> : <EmptyState title="No technical staff accounts" detail="Add technical employees through the account administration page." />}</section>
+        </>}
+    <div className="admin-shortcuts"><Link className="panel" to="/issues"><h2>All campus issues</h2><p>Review priority requests, assignment history, status, and SLA events.</p></Link><Link className="panel" to="/work-orders"><h2>Work orders</h2><p>Assign and verify field work.</p></Link><Link className="panel" to="/network-quality"><h2>Network management and analytics</h2><p>Review network inventory, measurements, and quality trends.</p></Link><Link className="panel" to="/admin/routing-rules"><h2>Routing rules</h2><p>Configure category, location and priority routing to teams.</p></Link><Link className="panel" to="/admin/sla-policies"><h2>SLA policies</h2><p>Manage response, resolution and escalation thresholds.</p></Link><a className="panel" href={adminUrl}><h2>Reference data and accounts</h2><p>Manage campus locations, teams, and individual accounts.</p></a></div>
+  </div>
 }
 
 function PageContent({ title, detail, link }: { title: string; detail: string; link?: { label: string; href: string } }) {

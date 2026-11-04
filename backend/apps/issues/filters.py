@@ -10,6 +10,8 @@ class IssueFilter(django_filters.FilterSet):
     created_before = django_filters.DateFilter(field_name="created_at", lookup_expr="date__lte")
     assigned_team = django_filters.NumberFilter(field_name="assigned_team_id")
     unassigned = django_filters.BooleanFilter(method="filter_unassigned")
+    priority_requested = django_filters.BooleanFilter(method="filter_priority_requested")
+    automatically_assigned = django_filters.BooleanFilter(method="filter_automatically_assigned")
     sla_state = django_filters.CharFilter(method="filter_sla_state")
 
     def filter_search(self, queryset, name, value):
@@ -25,7 +27,14 @@ class IssueFilter(django_filters.FilterSet):
         ).distinct()
 
     def filter_unassigned(self, queryset, name, value):
-        return queryset.filter(assigned_team__isnull=True) if value else queryset
+        return queryset.filter(assigned_to__isnull=True) if value else queryset
+
+    def filter_priority_requested(self, queryset, name, value):
+        return queryset.filter(priority_requested_at__isnull=not value)
+
+    def filter_automatically_assigned(self, queryset, name, value):
+        queryset = queryset.filter(assignments__is_automatic=value)
+        return queryset.distinct()
 
     def filter_sla_state(self, queryset, name, value):
         if value == "COMPLETED":

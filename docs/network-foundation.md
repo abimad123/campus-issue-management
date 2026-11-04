@@ -24,8 +24,8 @@ Networks filter by `campus`, `building`, `kind`, and `is_active`; search by name
 
 ## Access rules
 
-- Read inventory and raw measurements: `TECHNICIAN`, `SUPERVISOR`, `IT_MANAGER`, `CAMPUS_ADMIN`, `SYSTEM_ADMIN`.
-- Create/update/delete Network and NetworkDevice inventory: `IT_MANAGER`, `CAMPUS_ADMIN`, `SYSTEM_ADMIN`.
+- Read inventory and raw measurements: `ADMIN`, or `TECHNICAL_STAFF` with `Network` or `IT Support` specialization.
+- Create/update/delete Network and NetworkDevice inventory: `ADMIN`.
 - Append a measurement: any of the network-reading roles above; the server sets `recorded_by` and `measured_at`.
 - Update/delete measurements: not available through the API.
 
@@ -97,7 +97,7 @@ Overall window quality is the worst normal quality represented (`CRITICAL`, then
 
 ### Read-only APIs
 
-All analytics routes reuse the network measurement read permission (technician, supervisor, IT manager, campus administrator, system administrator). Each request requires session authentication. Summary is unpaginated; grouped lists use the default DRF page-number size of 20 and include the time window in the response. General grouped lists sort by display name/identifier ascending. Problem lists contain only location/device groups with at least one poor or critical record and sort by critical count descending, poor count descending, latest measured time descending, then identifier ascending.
+All analytics routes reuse the network measurement read permission (Admin or technical staff specialized in Network/IT Support). Each request requires session authentication. Summary is unpaginated; grouped lists use the default DRF page-number size of 20 and include the time window in the response. General grouped lists sort by display name/identifier ascending. Problem lists contain only location/device groups with at least one poor or critical record and sort by critical count descending, poor count descending, latest measured time descending, then identifier ascending.
 
 | Method | Endpoint | Result |
 | --- | --- | --- |
@@ -115,7 +115,7 @@ There is no row-level campus membership/scope on current network-read roles; tho
 
 ## Phase 5.3B — Network Quality dashboard
 
-The `/network-quality` page is available through the existing network-operations navigation to technicians, supervisors, IT managers, campus administrators, and system administrators. It uses the Phase 5.3A read-only analytics API; frontend role gating is a usability layer only, and backend permissions remain authoritative.
+The `/network-quality` page is available through the existing network-operations navigation to Admin and network/IT-support technical staff. It uses the Phase 5.3A read-only analytics API; frontend role gating is a usability layer only, and backend permissions remain authoritative.
 
 The page presents the backend summary and quality distribution, attention-ranked problem locations and devices, campus/building/location/device/network summaries, primary degradation factors, and recent raw measurements. It supports the 24-hour, 7-day, and 30-day windows, plus the analytics API's campus, building, location, network, device, device type, network type, quality, and connection-state filters. Filter updates request fresh server-side results; Clear filters returns to defaults. All grouped analytics results and raw measurements use their server pagination rather than requesting oversized pages. Each section has loading, empty, error, and retry behavior. Summary/distribution has its own retry; Refresh data invalidates dashboard queries without polling.
 
@@ -131,7 +131,7 @@ Phases 5.3A–5.3B provide backend aggregation and its operational dashboard onl
 
 Historical trends are descriptive summaries of stored network measurements. They are derived on request from `NetworkMeasurement` and the Phase 5.2 evaluator; no trend snapshots, duplicated measurements, or synthetic history are stored. Quality levels and primary evaluated factors come from the evaluator rather than SQL or client-side reclassification.
 
-`GET /api/network-analytics/trends/` is read-only and uses the same authenticated network-measurement reader roles as the Phase 5.3A analytics endpoints: technicians, supervisors, IT managers, campus administrators, and system administrators. Students and other unauthorized roles receive 403; anonymous requests require authentication. The current role model does not provide row-level campus isolation; filters narrow the visible dataset but are not security boundaries.
+`GET /api/network-analytics/trends/` is read-only and uses the same authenticated network-measurement readers as the Phase 5.3A analytics endpoints: Admin and Network/IT Support technical staff. Students, Staff, and technical staff with other specializations receive 403; anonymous requests require authentication. The current role model does not provide row-level campus isolation; filters narrow the visible dataset but are not security boundaries.
 
 The endpoint supports `range=24h|7d|30d` (default `24h`) and explicit timezone-aware ISO-8601 `start` and `end`. Explicit values must be provided together and take precedence over `range`. The interval is start-inclusive and end-exclusive, following Phase 5.3A. Durations up to 24 hours use local-time hourly buckets; longer periods, including 7-day and 30-day ranges, use local-time daily buckets. Explicit ranges use the same duration-based rule. Only buckets containing measurements are returned; no zero-filled periods are fabricated. A fully empty window returns `buckets: []` and comparison status `NO_DATA`.
 
@@ -162,8 +162,8 @@ Network findings may support campus operations, but the Issue remains the operat
 | POST | `/api/issues/:id/network-context/` | Attach one existing measurement to a manageable issue; duplicate pairs return a validation error and no unrelated workflow events are generated |
 | GET | `/api/issues/?search=...` | Search tickets, title, description, and location only within the caller's existing issue visibility scope; results remain paginated |
 
-The measurement evaluation page offers **Create Issue** to network readers and **Attach to Existing Issue** only to supervisors, IT managers, and campus/system administrators. Create Issue opens the standard issue form with editable title/description, prefilled measurement location, and an existing Wi-Fi/Network category when available; if no matching category exists the operator must choose one. The form displays the measurement timestamp, network/device, location, quality, primary factor, evaluator version, and available readings as supporting evidence. Opening it performs no write. Normal issue creation runs its existing routing, SLA, notification, and audit behavior; work orders remain optional and are never created automatically.
+The measurement evaluation page offers **Create Issue** to network readers and **Attach to Existing Issue** only to Admin. Create Issue opens the standard issue form with editable title/description, prefilled measurement location, and an existing Wi-Fi/Network category when available; if no matching category exists the operator must choose one. The form displays the measurement timestamp, network/device, location, quality, primary factor, evaluator version, and available readings as supporting evidence. Opening it performs no write. Normal issue creation runs its existing routing, SLA, notification, and audit behavior; work orders remain optional and are never created automatically.
 
-On issue detail, the Network Context section is requested only for network-reader roles. It shows the provenance snapshot and source reading summary and links to the original measurement evaluation. The API requires both network-reader permission and the existing issue object permission: student/staff and facility-manager/department-head roles gain no network access; a technician may create a new contextual issue using existing issue-creation permission and view context for visible issues, but cannot attach context to an existing issue through the issue write API. Supervisors may attach context only to issues within their team scope; IT managers and campus/system administrators follow their existing issue-management scope. Frontend role checks are for usability and do not replace API enforcement.
+On issue detail, the Network Context section is requested only for network-reader roles. It shows the provenance snapshot and source reading summary and links to the original measurement evaluation. The API requires both network-reader permission and the existing issue object permission: student/staff do not have network access; technical staff may create a new contextual issue using existing issue-creation permission and view context only for assigned issues, but cannot attach context to existing issues. Admin can attach context to any issue. Frontend role checks are for usability and do not replace API enforcement.
 
 Create-issue and attach operations are transactional. `IssueNetworkContext` is protected against measurement, issue, and creator deletion, and records an audit event when attached to an existing issue. Context attachment alone sends no notification and does not alter assignment, status, SLA, or work orders. No fuzzy matching, duplicate issue search, automated ticket generation, threshold alerting, or issue/work-order automation is included in Phase 5.4.

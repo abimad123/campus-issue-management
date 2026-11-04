@@ -41,7 +41,7 @@ class IssueAssignmentViewSet(viewsets.GenericViewSet):
         # Keep the visibility query separate from the row lock: supervisor visibility
         # uses DISTINCT across team membership, which PostgreSQL cannot lock directly.
         issue = Issue.objects.select_for_update().get(pk=visible_issue_id)
-        if request.user.role not in ADMIN_ROLES and request.user.role not in {UserRole.SUPERVISOR}:
+        if request.user.role != UserRole.ADMIN:
             raise PermissionDenied("You are not allowed to reassign issues.")
         serializer = ManualAssignmentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -49,15 +49,11 @@ class IssueAssignmentViewSet(viewsets.GenericViewSet):
         if not team:
             from rest_framework.exceptions import ValidationError
             raise ValidationError({"team": "Choose an active team."})
-        if request.user.role == UserRole.SUPERVISOR and not request.user.teams.filter(pk=team.pk).exists():
-            raise PermissionDenied("Supervisors may assign only to their own teams.")
         user_id = serializer.validated_data.get("user")
-        assignee = None
-        if user_id:
-            assignee = team.members.filter(pk=user_id, is_active=True).first()
-            if not assignee:
-                from rest_framework.exceptions import ValidationError
-                raise ValidationError({"user": "Choose an active member of the selected team."})
+        assignee = team.members.filter(pk=user_id, is_active=True, role=UserRole.TECHNICAL_STAFF).first()
+        if not assignee:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"user": "Choose active technical staff belonging to the selected team."})
         with transaction.atomic():
             old_team = issue.assigned_team_id
             old_status = issue.status
@@ -69,7 +65,6 @@ class IssueAssignmentViewSet(viewsets.GenericViewSet):
             assignment = Assignment.objects.create(issue=issue, team=team, user=assignee, assigned_by=request.user, reason=serializer.validated_data["reason"])
             if old_status != issue.status:
                 IssueEvent.objects.create(issue=issue, actor=request.user, from_status=old_status, to_status=issue.status, note=f"Assigned to {team.name}: {assignment.reason}")
-            for recipient in team.members.filter(is_active=True):
-                Notification.objects.create(recipient=recipient, issue=issue, notification_type="ISSUE_ASSIGNED", title="Issue assigned to your team", message=f"{issue.ticket_number}: {issue.title}")
-            record_audit("issue.reassigned" if old_team else "issue.assigned", actor=request.user, entity=assignment, context={"issue_id": issue.pk, "team_id": team.pk, "previous_team_id": old_team})
+            Notification.objects.get_or_create(recipient=assignee, issue=issue, notification_type="ISSUE_ASSIGNED", defaults={"title": "Issue assigned to you", "message": f"{issue.ticket_number}: {issue.title}"})
+            record_audit("issue.reassigned" if old_team else "issue.assigned", actor=request.user, entity=assignment, context={"issue_id": issue.pk, "team_id": team.pk, "technician_id": assignee.pk, "previous_team_id": old_team})
         return Response({"id": assignment.pk, "team": team.name, "user": assignee.full_name if assignee else None, "reason": assignment.reason}, status=status.HTTP_201_CREATED)

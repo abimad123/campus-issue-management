@@ -8,9 +8,12 @@ from .roles import ADMIN_ROLES, UserRole
 
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True, db_index=True)
+    institutional_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
     full_name = models.CharField(max_length=160)
     phone_number = models.CharField(max_length=32, blank=True)
     role = models.CharField(max_length=24, choices=UserRole.choices, default=UserRole.STUDENT)
+    legacy_role = models.CharField(max_length=24, blank=True, editable=False)
+    technical_specialization = models.CharField(max_length=80, blank=True)
     is_active = models.BooleanField(default=True)
     date_joined = models.DateTimeField(default=timezone.now, editable=False)
 
@@ -22,6 +25,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def is_staff(self):
         return self.role in ADMIN_ROLES
+
+    def has_perm(self, perm, obj=None):
+        return self.is_active and self.role in ADMIN_ROLES or super().has_perm(perm, obj)
+
+    def has_module_perms(self, app_label):
+        return self.is_active and self.role in ADMIN_ROLES or super().has_module_perms(app_label)
 
     def get_full_name(self):
         return self.full_name

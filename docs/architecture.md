@@ -2,11 +2,11 @@
 
 ## Current phase
 
-The repository has a React single-page application, a Django REST API, and PostgreSQL as the configured application database. Implemented workflows include identity, reference data, issue intake, configurable routing, persisted SLA deadlines, a bounded Celery Beat sweep, internal notifications, audit history, technician work orders with evidence and supervisor verification, network/device inventory, append-only raw measurements, versioned deterministic per-measurement quality evaluation, Phase 5.3A derived analytics APIs, the Phase 5.3B Network Quality dashboard, Phase 5.3C descriptive historical measurement trends, and Phase 5.4 operator-assisted measurement-to-issue context. Network readings remain supporting evidence; issues remain the operational source of truth. Forecasting, anomaly detection, alerts, and infrastructure polling remain out of scope.
+The repository has a React single-page application, a Django REST API, and PostgreSQL as the configured application database. Implemented workflows include identity, reference data, issue intake, configurable routing, persisted SLA deadlines, a bounded Celery Beat sweep, internal notifications, audit history, technical staff work orders with evidence and Admin verification, network/device inventory, append-only raw measurements, versioned deterministic per-measurement quality evaluation, Phase 5.3A derived analytics APIs, the Phase 5.3B Network Quality dashboard, Phase 5.3C descriptive historical measurement trends, and Phase 5.4 operator-assisted measurement-to-issue context. Network readings remain supporting evidence; issues remain the operational source of truth. Forecasting, anomaly detection, alerts, and infrastructure polling remain out of scope.
 
 ## Frontend
 
-`frontend/src/App.tsx` owns authenticated routing, role-aware navigation, sign-out, and the application shell. `features/auth` handles sign-in; `features/issues` contains issue list, intake, detail, dashboard summary, assignment and status update screens; `features/workorders` contains technician and supervisor queues and operational actions; `features/notifications` provides the recipient-scoped notification inbox and read state; `features/admin` contains routing-rule and SLA-policy forms; `features/assets` reads the asset register; `features/network` contains network inventory, evaluations, operational analytics, and historical trends. UI primitives are in `components/ui.tsx`, shared API calls and CSRF handling are in `lib/api.ts`, and API response contracts are in `types/api.ts`.
+`frontend/src/App.tsx` owns authenticated routing, role-aware navigation, sign-out, and the application shell. `features/auth` handles sign-in; `features/issues` contains issue list, intake, detail, dashboard summary, assignment and status update screens; `features/workorders` contains technical staff queues and Admin review/assignment actions; `features/notifications` provides the recipient-scoped notification inbox and read state; `features/admin` contains routing-rule and SLA-policy forms; `features/assets` reads the asset register; `features/network` contains network inventory, evaluations, operational analytics, and historical trends. UI primitives are in `components/ui.tsx`, shared API calls and CSRF handling are in `lib/api.ts`, and API response contracts are in `types/api.ts`.
 
 TanStack Query owns API data fetching and cache invalidation. React Router provides `/login`, `/dashboard`, `/issues`, `/issues/new`, `/issues/:id`, `/work-orders`, `/work-orders/:id`, `/notifications`, `/profile`, `/assets`, `/network/devices`, `/network/devices/:id`, `/network/networks`, `/network/measurements`, `/network/measurements/:id`, and administrator workflow configuration. Issue, work-order, and network-record lists use database-backed filters and page-number pagination. Network pages are role-gated and provide retry, loading, empty, and submission-feedback states. Operational dashboards show role-scoped queues from persisted work orders; notifications link to relevant issues and support marking items read.
 
@@ -14,15 +14,13 @@ TanStack Query owns API data fetching and cache invalidation. React Router provi
 
 `users.User` is the custom email-based user model and is configured before the first database migration. Email is normalized to lowercase. Passwords use Django’s password hashing and validators. Browser authentication uses Django sessions with `HttpOnly`, `SameSite=Lax` cookies and CSRF tokens on unsafe requests. Session and CSRF cookies are marked secure when `DJANGO_DEBUG=false`; production must use HTTPS.
 
-Roles are `STUDENT`, `STAFF`, `TECHNICIAN`, `SUPERVISOR`, `FACILITY_MANAGER`, `IT_MANAGER`, `DEPARTMENT_HEAD`, `CAMPUS_ADMIN`, and `SYSTEM_ADMIN`. Frontend navigation reflects these roles, but all access restrictions are enforced in API permission classes and querysets:
+Roles are `STUDENT`, `STAFF`, `TECHNICAL_STAFF`, and `ADMIN`. Student and employee login accepts an institutional ID or email; Django authenticates the resolved account and returns the database role. Technical specialization is separate from role. Existing administrator identities remain separate accounts even though their former operational roles are consolidated. Frontend navigation reflects these roles, but all access restrictions are enforced in API permission classes and querysets:
 
-- Students and staff can submit and view their own issues.
-- Technicians can view issues assigned to them and update permitted status transitions.
-- Supervisors can review unassigned issues and can view/update issues assigned to one of their teams. They cannot transition an unassigned issue until assigning it to a team in their scope.
-- Facility and IT managers, department heads, campus administrators, and system administrators have broader issue visibility.
-- Campus and system administrators can modify campus reference data, issue categories, and assets.
-- Technicians, supervisors, IT managers, and campus/system administrators can view network operations records; only IT managers and campus/system administrators can change network inventory. Raw measurements are append-only and record their authenticated submitter.
-- Django Admin access requires a staff account; seeded system administrator is a superuser for local development.
+- Students and staff can submit and view their own issues. Only staff may request priority handling at submission; the reason, requester, and time are stored. Queue priority is separate from the captured routing/SLA priority.
+- Technical staff can view only issues assigned to their active account and update permitted nonterminal status transitions. They cannot resolve, close, or reopen issues directly; work-order verification remains the resolution path.
+- Admin can view and manage all issues, configuration, assignments, and work orders across teams.
+- Network operations are available to Admin and technical staff whose specialization is Network or IT Support; inventory changes are Admin-only. Raw measurements remain append-only.
+- Django Admin access is granted to active Admin-role accounts. No shared administrator account is introduced.
 
 No public registration endpoint exists. Create initial operators through `createsuperuser` or the explicitly synthetic development seed command.
 
@@ -60,7 +58,7 @@ Authentication endpoints are `/api/auth/login/`, `/api/auth/logout/`, and `/api/
 
 ## Seed data and development
 
-`python manage.py seed_development` creates a small, idempotent, synthetic dataset using `.test` emails and invented campus records. It asks for a local password shared by those accounts. It never inserts sample issue volume or claims that the fictional records are official LPU infrastructure.
+`python manage.py seed_development` creates a small, idempotent, synthetic dataset using `.test` emails, synthetic institutional IDs, four roles, and invented campus records. It prompts for a password only when creating accounts; rerunning it does not reset existing passwords. It never inserts sample issue volume or claims that the fictional records are official LPU infrastructure.
 
 Automated tests use `config.test_settings` with an in-memory SQLite database, avoiding a running PostgreSQL service. PostgreSQL remains the configured real application database and must be used for local integration and deployment verification. Docker Compose defines the services but requires an available Docker engine.
 

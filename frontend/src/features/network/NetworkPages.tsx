@@ -11,7 +11,6 @@ const networkKindLabel: Record<NetworkKind, string> = { WIFI: 'Wi-Fi', LAN: 'LAN
 const deviceKindLabel: Record<NetworkDeviceKind, string> = { ACCESS_POINT: 'Access point', SWITCH: 'Switch', ROUTER: 'Router', GATEWAY: 'Gateway' }
 const deviceStateLabel: Record<NetworkDeviceState, string> = { DEPLOYED: 'Deployed', MAINTENANCE: 'Maintenance', RETIRED: 'Retired' }
 const connectionLabel: Record<NetworkConnectionState, string> = { CONNECTED: 'Connected', DEGRADED: 'Degraded', DISCONNECTED: 'Disconnected', UNKNOWN: 'Unknown' }
-const issueAttachRoles = new Set<AuthUser['role']>(['SUPERVISOR', 'IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN'])
 
 export function NetworkDevicesPage({ canManage }: { canManage: boolean }) {
   const cache = useQueryClient()
@@ -131,7 +130,7 @@ export function NetworkMeasurementEvaluationPage({ user }: { user: AuthUser }) {
 
 function NetworkContextActions({ evaluation, user }: { evaluation: NetworkQualityEvaluation; user: AuthUser }) {
   const cache = useQueryClient()
-  const canAttach = issueAttachRoles.has(user.role)
+  const canAttach = user.role === 'ADMIN' || (user.role === 'TECHNICAL_STAFF' && ['network', 'it support'].includes(user.technical_specialization.trim().toLowerCase()))
   const [attachOpen, setAttachOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -155,7 +154,7 @@ function NetworkContextActions({ evaluation, user }: { evaluation: NetworkQualit
       void cache.invalidateQueries({ queryKey: ['issue-network-context', context.issue] })
     },
   })
-  const manageableIssues = (issues.data?.results ?? []).filter((issue) => user.role !== 'SUPERVISOR'
+  const manageableIssues = (issues.data?.results ?? []).filter((issue) => user.role !== 'ADMIN'
     || (issue.assigned_team !== null && user.team_ids.includes(issue.assigned_team)))
   const pageCount = Math.max(1, Math.ceil((issues.data?.count ?? 0) / 20))
   function submit(event: FormEvent<HTMLFormElement>) {

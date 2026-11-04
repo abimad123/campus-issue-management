@@ -17,7 +17,7 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        password = getpass("Password for seeded development accounts: ")
+        password = getpass("Password for newly created development accounts: ")
         if len(password) < 12:
             raise CommandError("Use a development password at least 12 characters long.")
         validate_password(password)
@@ -86,24 +86,38 @@ class Command(BaseCommand):
         users = [
             ("student@example.test", "Sample Student", UserRole.STUDENT, ""),
             ("staff@example.test", "Sample Staff", UserRole.STAFF, ""),
-            ("technician@example.test", "Sample Technician", UserRole.TECHNICIAN, "IT Support"),
-            ("supervisor@example.test", "Sample Supervisor", UserRole.SUPERVISOR, "IT Support"),
-            ("facility-manager@example.test", "Sample Facility Manager", UserRole.FACILITY_MANAGER, "Facilities"),
-            ("it-manager@example.test", "Sample IT Manager", UserRole.IT_MANAGER, "Network Operations"),
-            ("department-head@example.test", "Sample Department Head", UserRole.DEPARTMENT_HEAD, "Academic Administration"),
-            ("campus-admin@example.test", "Sample Campus Administrator", UserRole.CAMPUS_ADMIN, ""),
-            ("system-admin@example.test", "Sample System Administrator", UserRole.SYSTEM_ADMIN, ""),
+            ("technician@example.test", "Sample Technician", UserRole.TECHNICAL_STAFF, "IT Support"),
+            ("supervisor@example.test", "Sample Supervisor", UserRole.ADMIN, "IT Support"),
+            ("facility-manager@example.test", "Sample Facility Manager", UserRole.ADMIN, "Facilities"),
+            ("it-manager@example.test", "Sample IT Manager", UserRole.ADMIN, "Network Operations"),
+            ("department-head@example.test", "Sample Department Head", UserRole.ADMIN, "Academic Administration"),
+            ("campus-admin@example.test", "Sample Campus Administrator", UserRole.ADMIN, ""),
+            ("system-admin@example.test", "Sample System Administrator", UserRole.ADMIN, ""),
         ]
+        demo_ids = {
+            "student@example.test": "STU-DEV-001",
+            "staff@example.test": "EMP-DEV-001",
+            "technician@example.test": "EMP-DEV-TECH-001",
+            "supervisor@example.test": "ADM-DEV-001",
+            "facility-manager@example.test": "ADM-DEV-002",
+            "it-manager@example.test": "ADM-DEV-003",
+            "department-head@example.test": "ADM-DEV-004",
+            "campus-admin@example.test": "ADM-DEV-005",
+            "system-admin@example.test": "ADM-DEV-006",
+        }
         for email, full_name, role, team_name in users:
-            user, _ = User.objects.get_or_create(
+            user, created = User.objects.get_or_create(
                 email=email,
-                defaults={"full_name": full_name, "role": role, "is_active": True, "is_superuser": role == UserRole.SYSTEM_ADMIN},
+                defaults={"full_name": full_name, "role": role, "is_active": True, "is_superuser": email == "system-admin@example.test", "institutional_id": demo_ids[email]},
             )
             user.full_name = full_name
             user.role = role
             user.is_active = True
-            user.is_superuser = role == UserRole.SYSTEM_ADMIN
-            user.set_password(password)
+            user.institutional_id = user.institutional_id or demo_ids[email]
+            if role == UserRole.TECHNICAL_STAFF and not user.technical_specialization:
+                user.technical_specialization = "IT Support"
+            if created:
+                user.set_password(password)
             user.save()
             if team_name:
                 teams[team_name].members.add(user)

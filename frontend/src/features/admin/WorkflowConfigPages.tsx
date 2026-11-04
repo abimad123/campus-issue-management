@@ -9,7 +9,7 @@ type RoutingRule = { id: number; name: string; active: boolean; priority_order: 
 type Escalation = { level: number; after_breach_seconds: number; recipient_role: string }
 type SlaPolicy = { id: number; name: string; active: boolean; priority_order: number; category: number | null; category_name: string | null; issue_priority: IssuePriority | null; response_time_seconds: number; resolution_time_seconds: number; warning_before_seconds: number; escalation_levels: Escalation[] }
 const priorities: IssuePriority[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
-const roles = ['SUPERVISOR', 'FACILITY_MANAGER', 'IT_MANAGER', 'CAMPUS_ADMIN', 'SYSTEM_ADMIN']
+const roles = ['ADMIN']
 const labels: Record<string, string> = { LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High', CRITICAL: 'Critical' }
 const list = <T,>(data: Paginated<T> | T[] | undefined): T[] => Array.isArray(data) ? data : data?.results ?? []
 const message = (error: unknown) => error instanceof ApiError ? error.message : 'Check the form and try again.'

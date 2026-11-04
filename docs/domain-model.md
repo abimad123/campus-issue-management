@@ -4,7 +4,7 @@ This document describes the records currently implemented. All campus and seed e
 
 ## Identity and organization
 
-- **User** — unique normalized email, full name, optional phone number, one role, active flag, Django password hash, join date, and Django permission fields. Roles are controlled choices.
+- **User** — unique normalized email, optional unique institutional ID, full name, optional phone number, one of four roles, a separate technical specialization, active flag, Django password hash, join date, and Django permission fields. `legacy_role` retains the pre-consolidation value for migration traceability and rollback.
 - **Campus** — named campus record with a unique code and active state.
 - **Building** — belongs to one Campus; code is unique within its Campus.
 - **Location** — an issue-reporting point in a Building or outdoors; can optionally parent smaller sublocations. It has a controlled location kind, code, description, and active state.
@@ -17,20 +17,20 @@ The intended hierarchy is `Campus → Building → Location`. Teams do not imply
 
 - **IssueCategory** — name, description, optional icon identifier, active state, and timestamps. The frontend reads categories from the API.
 - **Asset** — unique asset code and generated UUID QR identifier, name, type, Location, active state, and timestamps.
-- **Issue** — unique `ISS-YYYY-NNNNNN` ticket number; title and description; required category, Location, and reporter; optional Asset, assigned user, and assigned Team; controlled priority and status; created/updated and resolution/closure timestamps.
+- **Issue** — unique `ISS-YYYY-NNNNNN` ticket number; title and description; required category, Location, and reporter; optional Asset, assigned user, and assigned Team; queue priority, immutable-at-intake routing/SLA priority snapshot, priority request provenance, controlled status, and created/updated and resolution/closure timestamps.
+- **IssuePriorityEvent** — append-only actor, old/new priority, reason, and timestamp for staff requests and Admin review changes.
 - **IssueAttachment** — one validated image file associated with an Issue and uploader, with server-detected content type and timestamp.
 - **IssueEvent** — actual creation or status transition, with prior/current status, optional actor and note, and timestamp. It is the activity-history source; arbitrary activity events are not generated.
 
-Priority values are `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`. Lifecycle states are `OPEN`, `IN_REVIEW`, `ASSIGNED`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`, and `REOPENED`. The transition graph is enforced by a domain service that locks and reloads the issue before validating a transition. Active data-driven routing rules match category, location, and priority when an issue is submitted; the selected team/member and every automatic or manual outcome are retained in `Assignment` history. If no rule matches, the issue remains unassigned. Campus/system administrators can manually assign or reassign any active team; supervisors can assign only within their own teams. Reopening retains the original SLA policy, deadlines, breach timestamps, and escalation history.
+Priority values are `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`. Staff can request HIGH queue priority with a required reason; this changes ordering immediately and records provenance. It does not change the separate intake routing/SLA priority, deadlines, team, or technician. Only Admin can review or change queue priority after creation. Lifecycle states are `OPEN`, `IN_REVIEW`, `ASSIGNED`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`, and `REOPENED`. The transition graph is enforced by a domain service that locks and reloads the issue before validating a transition. Active data-driven routing rules match category, location, and captured routing priority when an issue is submitted; the selected team/technician and every automatic or manual outcome are retained in `Assignment` history. Automatic assignment selects an active technical staff member in the matched team with the lowest active issue/work-order workload and stable user-ID tie-break; if none is eligible, it keeps the issue in the Admin-visible unassigned queue. Admin can manually assign or reassign any active team. Reopening retains the original SLA policy, deadlines, breach timestamps, and escalation history.
 
 ## Visibility rules
 
 | Role group | Issue visibility | Status changes |
 | --- | --- | --- |
 | Student, Staff | Their own reports | None |
-| Technician | Issues assigned directly to them | Allowed non-terminal transitions on assigned issues; resolving/closing/reopening is denied and resolution must follow work-order verification |
-| Supervisor | Issues assigned to a team they belong to, plus unassigned issues for review | Allowed transitions only on issues assigned to one of their teams; unassigned rows are read-only until assigned |
-| Facility Manager, IT Manager, Department Head, Campus Admin, System Admin | All issues | Allowed lifecycle transitions |
+| Technical Staff | Issues assigned directly to their active account | Allowed non-terminal transitions on assigned issues; resolving/closing/reopening is denied and resolution must follow work-order verification |
+| Admin | All issues | Allowed lifecycle transitions and assignment/priority review |
 
 Visibility is applied to the queryset before filtering and pagination. Attachment retrieval applies the same issue visibility and does not publish uploaded files through a public media route.
 
@@ -43,9 +43,9 @@ Visibility is applied to the queryset before filtering and pagination. Attachmen
 - **WorkOrderMaterial** — simple material name, quantity, optional note, recorder, and time; this is not an inventory or procurement system.
 - **WorkOrderEvidence** — validated private image evidence. It is streamed only to users with work-order visibility.
 
-Work-order lifecycle is `ASSIGNED → ACCEPTED → IN_PROGRESS → COMPLETED → VERIFIED → CLOSED`; a supervisor may return `COMPLETED → REWORK → IN_PROGRESS`, and authorized operational users may cancel before completion. Every transition is enforced by backend services. Completing field work does not resolve or close an issue. Explicit supervisor verification resolves an issue only when it is already `IN_PROGRESS`; closing the issue remains a separate issue transition. Work-order timestamps provide operational timing, while issue SLA deadlines remain on Issue and are never recomputed by creating a work order.
+Work-order lifecycle is `ASSIGNED → ACCEPTED → IN_PROGRESS → COMPLETED → VERIFIED → CLOSED`; Admin may return `COMPLETED → REWORK → IN_PROGRESS` and cancel before completion. Every transition is enforced by backend services. Completing field work does not resolve or close an issue. Explicit Admin verification resolves an issue only when it is already `IN_PROGRESS`; closing the issue remains a separate issue transition. Work-order timestamps provide operational timing, while issue SLA deadlines remain on Issue and are never recomputed by creating a work order.
 
-Technicians see only work orders assigned to their active account. Supervisors see work orders belonging to their active teams and may only manage assignments within their team scope. Managers and administrators retain broader operational access. Technician targets must be active technician-role users who are members of the selected active team. Students and staff have no work-order detail visibility or technician controls.
+Technical staff see only work orders assigned to their active account. Admin can view and manage all work orders across teams. Technician targets must be active technical staff who are members of the selected active team. Students and staff have no work-order detail visibility or technician controls.
 
 ## Network foundation
 
@@ -54,7 +54,7 @@ Technicians see only work orders assigned to their active account. Supervisors s
 - **NetworkMeasurement** — an append-only record attributed to an authenticated user, Network, and campus Location; it may reference a registered NetworkDevice and stores individually nullable latency (ms), packet loss (%), download/upload (Mbps), signal strength (dBm), a user-reported connection state, and server timestamp. At least one numeric measurement is required, values are bounded, and device/network/location relationships are validated.
 - **IssueNetworkContext** — a protected, auditable relation between an Issue and a NetworkMeasurement, with creator/time and an immutable snapshot of evaluator version, overall quality, and primary factor. A measurement may support multiple issues; duplicate links to the same issue are prohibited. Raw readings remain on the measurement.
 
-Network inventory and measurement API visibility is granted to technicians, supervisors, IT managers, and campus/system administrators. Inventory mutation is limited to IT managers and campus/system administrators. Measurement create/list/retrieve is available to those operational roles; update and delete methods are not exposed.
+Network inventory and measurement API visibility is granted to Admin and technical staff specialized in Network or IT Support. Inventory mutation is Admin-only. Measurement create/list/retrieve is available to those operational roles; update and delete methods are not exposed.
 
 The Network app evaluates each record on demand using the deterministic service in version `1.0`. Evaluation includes per-metric states/reasons, an overall worst-metric classification, and a deterministic primary factor. It is not persisted and does not alter source readings. Missing metrics stay unavailable; no persisted measurement can have all numeric fields absent because the model/API enforce at least one reading.
 

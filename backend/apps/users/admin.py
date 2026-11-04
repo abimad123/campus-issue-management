@@ -12,7 +12,7 @@ class UserCreateForm(forms.ModelForm):
 
     class Meta:
         model = User
-        fields = ("email", "full_name", "phone_number", "role", "is_active")
+        fields = ("email", "institutional_id", "full_name", "phone_number", "role", "technical_specialization", "is_active")
 
     def clean_password(self):
         password = self.cleaned_data["password"]
@@ -32,25 +32,25 @@ class UserChangeForm(forms.ModelForm):
 
     class Meta:
         model = User
-        fields = ("email", "full_name", "phone_number", "role", "is_active", "is_superuser", "password", "groups", "user_permissions")
+        fields = ("email", "institutional_id", "full_name", "phone_number", "role", "technical_specialization", "is_active", "is_superuser", "password", "groups", "user_permissions")
 
 
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
     form = UserChangeForm
     add_form = UserCreateForm
-    list_display = ("email", "full_name", "role", "is_active", "is_superuser", "date_joined")
+    list_display = ("email", "institutional_id", "full_name", "role", "technical_specialization", "is_active", "is_superuser", "date_joined")
     list_filter = ("role", "is_active", "is_superuser")
-    search_fields = ("email", "full_name", "phone_number")
+    search_fields = ("email", "institutional_id", "full_name", "phone_number")
     ordering = ("email",)
     readonly_fields = ("last_login", "date_joined")
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Personal details", {"fields": ("full_name", "phone_number", "role")}),
+        ("Personal details", {"fields": ("full_name", "institutional_id", "phone_number", "role", "technical_specialization")}),
         ("Permissions", {"fields": ("is_active", "is_superuser", "groups", "user_permissions")}),
         ("Dates", {"fields": ("last_login", "date_joined")}),
     )
-    add_fieldsets = ((None, {"classes": ("wide",), "fields": ("email", "full_name", "phone_number", "role", "is_active", "password")}),)
+    add_fieldsets = ((None, {"classes": ("wide",), "fields": ("email", "institutional_id", "full_name", "phone_number", "role", "technical_specialization", "is_active", "password")}),)
 
     def save_model(self, request, obj, form, change):
         if change and form.cleaned_data.get("password") and form.cleaned_data["password"] != obj.password:

@@ -15,6 +15,9 @@ class DevelopmentSeedCommandTests(TestCase):
     def test_seed_creates_synthetic_records_idempotently(self, _getpass):
         output = StringIO()
         call_command("seed_development", stdout=output)
+        student = User.objects.get(email="student@example.test")
+        student.set_password("Changed-Existing-Password-712!")
+        student.save(update_fields=["password"])
         call_command("seed_development", stdout=StringIO())
 
         self.assertEqual(Campus.objects.count(), 1)
@@ -26,4 +29,6 @@ class DevelopmentSeedCommandTests(TestCase):
         self.assertEqual(User.objects.count(), 9)
         self.assertEqual(Asset.objects.count(), 5)
         self.assertIn("Synthetic development", output.getvalue())
-        self.assertTrue(User.objects.get(email="student@example.test").check_password("Dev-Only-Shared-Password-239!"))
+        self.assertTrue(User.objects.get(email="student@example.test").check_password("Changed-Existing-Password-712!"))
+        self.assertEqual(student.institutional_id, "STU-DEV-001")
+        self.assertEqual(set(User.objects.values_list("role", flat=True)), {"STUDENT", "STAFF", "TECHNICAL_STAFF", "ADMIN"})

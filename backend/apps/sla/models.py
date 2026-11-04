@@ -26,7 +26,8 @@ class SlaEscalationLevel(models.Model):
     policy = models.ForeignKey(SlaPolicy, on_delete=models.CASCADE, related_name="escalation_levels")
     level = models.PositiveSmallIntegerField()
     after_breach_seconds = models.PositiveIntegerField(default=0)
-    recipient_role = models.CharField(max_length=32, choices=[("SUPERVISOR", "Team supervisor"), ("FACILITY_MANAGER", "Facility manager"), ("IT_MANAGER", "IT manager"), ("CAMPUS_ADMIN", "Campus administrator"), ("SYSTEM_ADMIN", "System administrator")])
+    recipient_role = models.CharField(max_length=32, choices=[("ADMIN", "Administrator")], default="ADMIN")
+    legacy_recipient_role = models.CharField(max_length=32, blank=True, editable=False)
 
     class Meta:
         ordering = ["level"]

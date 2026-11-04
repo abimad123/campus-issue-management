@@ -11,9 +11,10 @@ from .models import SlaEscalationLevel, SlaEvent, SlaPolicy
 
 
 def get_policy_for_issue(issue):
+    effective_priority = getattr(issue, "routing_priority", None) or issue.priority
     policies = SlaPolicy.objects.filter(active=True).filter(
         Q(category__isnull=True) | Q(category=issue.category),
-        Q(issue_priority__isnull=True) | Q(issue_priority=issue.priority),
+        Q(issue_priority__isnull=True) | Q(issue_priority=effective_priority),
     )
     return min(policies, key=lambda p: (-sum(v is not None for v in (p.category_id, p.issue_priority)), p.priority_order, p.pk), default=None)
 
@@ -33,8 +34,6 @@ def start_sla(issue):
 
 def _notify(issue, role, kind, title, message):
     qs = User.objects.filter(is_active=True, role=role)
-    if role == "SUPERVISOR" and issue.assigned_team_id:
-        qs = qs.filter(teams=issue.assigned_team)
     for recipient in qs.distinct():
         Notification.objects.get_or_create(recipient=recipient, issue=issue, notification_type=kind, defaults={"title": title, "message": message})
 
@@ -56,7 +55,7 @@ def _record_breach(issue, condition, occurred_at):
     issue.save(update_fields=update_fields)
     _, created = SlaEvent.objects.get_or_create(issue=issue, event_type=event_type, defaults={"policy": policy, "created_at": occurred_at})
     if created:
-        _notify(issue, "SUPERVISOR", f"{condition.upper()}_SLA_BREACHED", f"{condition.title()} SLA breached", issue.ticket_number)
+        _notify(issue, "ADMIN", f"{condition.upper()}_SLA_BREACHED", f"{condition.title()} SLA breached", issue.ticket_number)
         record_audit(f"sla.{condition}_breached", entity=issue, context={"policy_id": policy.pk})
     return created
 
@@ -100,13 +99,13 @@ def process_sla_sweep(now=None, batch_size=500):
         if not response_done and issue.response_due_at and issue.response_due_at - timedelta(seconds=policy.warning_before_seconds) <= now < issue.response_due_at:
             _, created = SlaEvent.objects.get_or_create(issue=issue, event_type=SlaEvent.Type.RESPONSE_WARNING, defaults={"policy": policy, "metadata": {"deadline": issue.response_due_at.isoformat(), "kind": "response"}})
             if created:
-                _notify(issue, "SUPERVISOR", "RESPONSE_SLA_APPROACHING", "Response deadline approaching", issue.ticket_number)
+                _notify(issue, "ADMIN", "RESPONSE_SLA_APPROACHING", "Response deadline approaching", issue.ticket_number)
         if issue.status not in {"RESOLVED", "CLOSED"} and issue.resolution_due_at and issue.resolution_due_at <= now and not issue.resolution_breached_at:
             _record_breach(issue, "resolution", now)
         if issue.status not in {"RESOLVED", "CLOSED"} and issue.resolution_due_at and issue.resolution_due_at - timedelta(seconds=policy.warning_before_seconds) <= now < issue.resolution_due_at:
             _, created = SlaEvent.objects.get_or_create(issue=issue, event_type=SlaEvent.Type.RESOLUTION_WARNING, defaults={"policy": policy, "metadata": {"deadline": issue.resolution_due_at.isoformat(), "kind": "resolution"}})
             if created:
-                _notify(issue, "SUPERVISOR", "RESOLUTION_SLA_APPROACHING", "Resolution deadline approaching", issue.ticket_number)
+                _notify(issue, "ADMIN", "RESOLUTION_SLA_APPROACHING", "Resolution deadline approaching", issue.ticket_number)
         issue.save(update_fields=["response_breached_at", "resolution_breached_at", "updated_at"])
         if issue.next_escalation_at and issue.next_escalation_at <= now:
             next_level = SlaEscalationLevel.objects.filter(policy=policy, level__gt=issue.current_escalation_level).order_by("level").first()

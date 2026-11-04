@@ -21,7 +21,7 @@ class UserManager(BaseUserManager):
     def create_superuser(self, email, full_name, password=None, **extra_fields):
         from .roles import UserRole
 
-        extra_fields.setdefault("role", UserRole.SYSTEM_ADMIN)
+        extra_fields.setdefault("role", UserRole.ADMIN)
         extra_fields.setdefault("is_active", True)
         extra_fields.setdefault("is_superuser", True)
         if not extra_fields["is_superuser"]:

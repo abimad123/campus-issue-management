@@ -2,7 +2,7 @@
 
 An academic project for campus service requests, maintenance coordination, and network quality work in a realistic university setting. Lovely Professional University is the project context; this software does not claim official affiliation with or operation by LPU.
 
-**Current phase: Phase 5.4 — Operator-Assisted Network Finding to Issue Context.** The application includes session authentication, role-based API access, campus reference data, issue intake, configurable routing, persistent SLA deadlines and escalation, internal notifications, audit history, technician work orders with private evidence and supervisor verification, network inventory, validated operator-submitted raw measurements, deterministic per-measurement quality evaluation, derived network analytics and historical trends, and an operator-reviewed path to create or contextualize campus issues. Network readings remain supporting evidence; the campus issue remains the operational source of truth.
+**Current phase: Phase 5.4 — Operator-Assisted Network Finding to Issue Context.** The application includes session authentication, a four-role architecture, campus reference data, issue intake, configurable least-workload technical assignment, persistent SLA deadlines and escalation, internal notifications, audit history, technician work orders with private evidence and Admin verification, network inventory, validated operator-submitted raw measurements, deterministic per-measurement quality evaluation, derived network analytics and historical trends, and an operator-reviewed path to create or contextualize campus issues. Network readings remain supporting evidence; the campus issue remains the operational source of truth.
 
 ## Stack and structure
 
@@ -36,7 +36,7 @@ Requirements: Python 3.12+, Node.js 20+, npm, PostgreSQL 16, and Redis. From the
        python manage.py seed_development
        python manage.py runserver
 
-   The seed command prompts for one development password shared by its synthetic test accounts. It creates `system-admin@example.test` as the development Django Admin account. Seed records are synthetic and are not official campus infrastructure or real people.
+   The seed command creates synthetic student, staff, technical staff, and individual Admin accounts. It creates `system-admin@example.test` as a local Django Admin account. Seed records are synthetic and are not official campus infrastructure or real people.
 
 3. In another terminal, start the frontend:
 
@@ -54,7 +54,9 @@ The React app uses Django’s database-backed session authentication. It request
 
 ### Development seed data
 
-`python manage.py seed_development` is idempotent and creates one explicitly synthetic campus, example buildings and locations, departments, teams, categories, role-specific users, a small asset inventory, three synthetic network types, and representative device types. It creates no sample issues or measurements. Choose a private password when prompted; all seeded accounts share it for local convenience.
+`python manage.py seed_development` is idempotent and creates one explicitly synthetic campus, example buildings and locations, departments, teams, categories, synthetic users with four role types and institutional IDs, a small asset inventory, three synthetic network types, and representative device types. It creates no sample issues or measurements. Choose a private password when prompted; a rerun does not reset passwords for existing users.
+
+For operational demonstration accounts, active demo routing/SLA configuration, six end-to-end issues, and eligible work orders, run `docker compose exec backend python manage.py seed_operational_demo`. It prompts securely for a development-only password only when it needs to create accounts. Institutional IDs, `.test` login emails, collision behavior, and synthetic issue details are documented in [docs/development-demo-data.md](docs/development-demo-data.md). The command uses existing campus locations/categories, records actual routing outcomes, creates no synthetic network measurements, and does not reset existing passwords.
 
 ### Tests and checks
 
@@ -76,7 +78,7 @@ Create `.env` from `.env.example`, update its secret and password, then run from
 
        docker compose up --build
 
-Compose waits for PostgreSQL and Redis health, runs migrations once in a dedicated `migrate` job, then starts Django. Celery Worker and Beat wait until Django passes its API healthcheck as well as Redis health, so neither can process tasks against an unmigrated schema. The Compose environment explicitly uses `POSTGRES_HOST=postgres` and `REDIS_URL=redis://redis:6379/0`; no restart loop is used to mask migration failures. Seed records are not created automatically; run `docker compose exec backend python manage.py seed_development` to create them. Open the UI at `http://localhost:5173`. The liveness endpoint is `http://localhost:8000/api/health/`.
+Compose waits for PostgreSQL and Redis health, runs migrations once in a dedicated `migrate` job, then starts Django. Celery Worker and Beat wait until Django passes its API healthcheck as well as Redis health, so neither can process tasks against an unmigrated schema. The Compose environment explicitly uses `POSTGRES_HOST=postgres` and `REDIS_URL=redis://redis:6379/0`; no restart loop is used to mask migration failures. The backend runs Django's development server with `--noreload` because its file watcher can encounter I/O errors while scanning Windows/WSL bind mounts. The backend source bind mount remains available, but restart the backend container after Python code edits with `docker compose restart backend`. Seed records are not created automatically; run `docker compose exec backend python manage.py seed_development` to create them. Open the UI at `http://localhost:5173`. The liveness endpoint is `http://localhost:8000/api/health/`.
 
 ## API overview
 
@@ -85,7 +87,7 @@ All resource endpoints require an authenticated session unless noted.
 | Method and path | Purpose |
 | --- | --- |
 | `GET /api/auth/csrf/` | Set the CSRF cookie before login or other writes |
-| `POST /api/auth/login/` | Start a session using email and password |
+| `POST /api/auth/login/` | Start a session using institutional ID or email and password |
 | `POST /api/auth/logout/` | End the current session |
 | `GET /api/auth/me/` | Return the signed-in account and team IDs |
 | `GET /api/campuses/`, `/api/buildings/`, `/api/locations/` | Read active campus reference data |
@@ -102,7 +104,7 @@ All resource endpoints require an authenticated session unless noted.
 | `POST /api/work-orders/:id/assign/` | Assign or reassign to an active technician in the selected team |
 | `POST /api/work-orders/:id/accept/`, `/start/` | Accept assigned work and begin field work |
 | `POST /api/work-orders/:id/notes/`, `/materials/`, `/evidence/` | Record field notes, materials, and private image evidence |
-| `POST /api/work-orders/:id/complete/` | Submit a required resolution summary for supervisor review |
+| `POST /api/work-orders/:id/complete/` | Submit a required resolution summary for Admin review |
 | `POST /api/work-orders/:id/verify/`, `/rework/`, `/close/`, `/cancel/` | Verify or return work, then close or cancel under operational permissions |
 | `GET /api/work-order-evidence/:id/file/` | Stream evidence after work-order authorization |
 | `GET /api/work-orders/summary/` | Return database-backed work-order counts scoped to the current user |
@@ -124,4 +126,4 @@ Issue and work-order collections support page-number pagination (20 per page); w
 
 ## Current boundaries
 
-Students and staff can create reports and see only their own; they have no work-order controls. Technicians see only work orders assigned to their active account. Supervisors see work orders for their teams, while designated managers and administrators have broader operational visibility. Technician assignment requires an active technician who is a member of the selected active team. Issue and work-order images accept JPEG, PNG, or WebP up to 5 MB and are served only through authenticated, scope-checked endpoints. Supervisor verification may resolve an in-progress issue; closing that issue remains a separate issue lifecycle action. Network inventory is visible to technicians, supervisors, IT managers, and campus/system administrators; inventory changes are limited to IT managers and campus/system administrators. Measurements remain append-only operator-submitted records; quality classifications are deterministic explanations and are not live device telemetry. Network measurements never trigger automatic issue or work-order generation.
+The four account roles are Student, Staff, Technical Staff, and Admin. Students and staff can create reports and see only their own; staff may request high queue priority with a reason. A priority request does not alter the routing/SLA priority snapshot. Technical Staff see only issues and work orders assigned to their active account and cannot directly resolve, close, or reopen issues. Admin sees and manages issues/work orders across teams, reviews priority requests, and performs manual assignment/reassignment to active technical staff in the selected team. Automatic routing chooses the eligible technician with the lowest workload and leaves unmatched or unstaffed work in the Admin-visible queue. Network inventory is visible to Admin and technical staff specialized in Network or IT Support; only Admin can change inventory. Issue and work-order images accept JPEG, PNG, or WebP up to 5 MB and are served only through authenticated, scope-checked endpoints. Admin verification may resolve an in-progress issue; closing that issue remains a separate issue lifecycle action. Measurements remain append-only operator-submitted records; quality classifications are deterministic explanations and are not live device telemetry. Network measurements never trigger automatic issue or work-order generation.

@@ -19,9 +19,9 @@ from apps.issues.services import transition_issue
 
 class RoutingAndSlaTests(TestCase):
     def setUp(self):
-        self.admin = User.objects.create_user("admin@tests.test", "Admin", "test-password", role=UserRole.CAMPUS_ADMIN)
+        self.admin = User.objects.create_user("admin@tests.test", "Admin", "test-password", role=UserRole.ADMIN)
         self.student = User.objects.create_user("student@tests.test", "Student", "test-password", role=UserRole.STUDENT)
-        self.supervisor = User.objects.create_user("supervisor@tests.test", "Supervisor", "test-password", role=UserRole.SUPERVISOR)
+        self.supervisor = User.objects.create_user("supervisor@tests.test", "Supervisor", "test-password", role=UserRole.ADMIN)
         campus = Campus.objects.create(name="Test", code="test")
         building = Building.objects.create(campus=campus, name="Block", code="block")
         self.location = Location.objects.create(building=building, name="Room")
@@ -47,6 +47,37 @@ class RoutingAndSlaTests(TestCase):
         self.assertIsNone(self.issue.assigned_team)
         self.assertTrue(self.issue.assignments.get().is_automatic)
 
+    def test_automatic_assignment_uses_lowest_active_issue_workload_and_valid_team_members(self):
+        from apps.workorders.models import WorkOrder
+
+        first = User.objects.create_user("first-tech@tests.test", "First Technician", "test-password", role=UserRole.TECHNICAL_STAFF)
+        second = User.objects.create_user("second-tech@tests.test", "Second Technician", "test-password", role=UserRole.TECHNICAL_STAFF)
+        inactive = User.objects.create_user("inactive-tech@tests.test", "Inactive Technician", "test-password", role=UserRole.TECHNICAL_STAFF, is_active=False)
+        outside = User.objects.create_user("outside-tech@tests.test", "Outside Technician", "test-password", role=UserRole.TECHNICAL_STAFF)
+        self.team.members.add(first, second, inactive)
+        RoutingRule.objects.create(name="Automatic Network Team", category=self.category, target_team=self.team, target_user=first)
+        Issue.objects.create(title="First active issue", description="An active issue already assigned to the first technician.", category=self.category, location=self.location, reporter=self.student, assigned_team=self.team, assigned_to=first, status=Issue.Status.IN_PROGRESS)
+        Issue.objects.create(title="Second active issue", description="A second active issue already assigned to the first technician.", category=self.category, location=self.location, reporter=self.student, assigned_team=self.team, assigned_to=first, status=Issue.Status.ASSIGNED)
+        WorkOrder.objects.create(issue=self.issue, team=self.team, assigned_to=second, title="Existing field task")
+
+        assignment = route_issue(self.issue)
+        self.assertEqual(assignment.user, second)
+        self.assertEqual(assignment.team, self.team)
+        self.assertIn("lowest active workload", assignment.reason)
+        self.assertNotEqual(assignment.user, inactive)
+        self.assertNotEqual(assignment.user, outside)
+
+    def test_no_eligible_technical_staff_leaves_issue_in_admin_queue(self):
+        inactive = User.objects.create_user("inactive-only@tests.test", "Inactive Only", "test-password", role=UserRole.TECHNICAL_STAFF, is_active=False)
+        self.team.members.add(inactive)
+        RoutingRule.objects.create(name="No Active Technician", category=self.category, target_team=self.team)
+        assignment = route_issue(self.issue)
+        self.issue.refresh_from_db()
+        self.assertIsNone(assignment.user)
+        self.assertIsNone(self.issue.assigned_to)
+        self.assertEqual(self.issue.assigned_team, self.team)
+        self.assertTrue(Notification.objects.filter(issue=self.issue, recipient=self.admin, notification_type="ISSUE_ASSIGNED").exists())
+
     def test_policy_precedence_default_and_deadlines_persist(self):
         default = SlaPolicy.objects.create(name="Default", response_time_seconds=900, resolution_time_seconds=3600)
         SlaPolicy.objects.create(name="High priority", issue_priority="HIGH", response_time_seconds=300, resolution_time_seconds=1200)
@@ -64,18 +95,24 @@ class RoutingAndSlaTests(TestCase):
         from rest_framework.test import APIClient
         from apps.issues.models import IssueEvent
         RoutingRule.objects.create(name="Network team", category=self.category, target_team=self.team)
-        policy = SlaPolicy.objects.create(name="Network high", category=self.category, issue_priority="HIGH", response_time_seconds=600, resolution_time_seconds=3600)
+        policy = SlaPolicy.objects.create(name="Network normal", category=self.category, issue_priority="MEDIUM", response_time_seconds=600, resolution_time_seconds=3600)
+        SlaPolicy.objects.create(name="Network high priority", category=self.category, issue_priority="HIGH", response_time_seconds=60, resolution_time_seconds=300)
         client = APIClient()
-        client.force_authenticate(self.student)
-        response = client.post(reverse("issue-list"), {"title": "Wi-Fi not available", "description": "Wireless service has stopped working in this location.", "category": self.category.pk, "location": self.location.pk, "priority": "HIGH"}, format="json")
+        staff = User.objects.create_user("staff-priority@tests.test", "Staff Requester", "test-password", role=UserRole.STAFF)
+        client.force_authenticate(staff)
+        technician = User.objects.create_user("workflow-tech@tests.test", "Workflow Technician", "test-password", role=UserRole.TECHNICAL_STAFF)
+        self.team.members.add(technician)
+        response = client.post(reverse("issue-list"), {"title": "Wi-Fi not available", "description": "Wireless service has stopped working in this location.", "category": self.category.pk, "location": self.location.pk, "request_priority": True, "priority_reason": "Classes cannot access course materials."}, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         issue = Issue.objects.get(pk=response.data["id"])
         self.assertEqual(issue.assigned_team, self.team)
         self.assertEqual(issue.sla_policy, policy)
+        self.assertEqual(issue.priority, Issue.Priority.HIGH)
+        self.assertEqual(issue.routing_priority, Issue.Priority.MEDIUM)
         self.assertAlmostEqual((issue.response_due_at - issue.created_at).total_seconds(), 600, delta=2)
         self.assertEqual(issue.sla_events.filter(event_type=SlaEvent.Type.STARTED).count(), 1)
         self.assertTrue(issue.assignments.get().is_automatic)
-        self.assertTrue(Notification.objects.filter(issue=issue, recipient=self.supervisor, notification_type="ISSUE_ASSIGNED").exists())
+        self.assertTrue(Notification.objects.filter(issue=issue, recipient=technician, notification_type="ISSUE_ASSIGNED").exists())
         self.assertTrue(AuditEntry.objects.filter(action="issue.assigned", context__issue_id=issue.pk).exists())
         self.assertEqual(IssueEvent.objects.filter(issue=issue).count(), 2)
 
@@ -90,7 +127,7 @@ class RoutingAndSlaTests(TestCase):
 
     def test_sweep_warns_breaches_escalates_once_and_notifies(self):
         policy = SlaPolicy.objects.create(name="Urgent", issue_priority="HIGH", response_time_seconds=60, resolution_time_seconds=120, warning_before_seconds=30)
-        SlaEscalationLevel.objects.create(policy=policy, level=1, after_breach_seconds=0, recipient_role=UserRole.SUPERVISOR)
+        SlaEscalationLevel.objects.create(policy=policy, level=1, after_breach_seconds=0, recipient_role=UserRole.ADMIN)
         self.issue.sla_policy = policy
         self.issue.response_due_at = timezone.now() - timedelta(minutes=1)
         self.issue.resolution_due_at = timezone.now() - timedelta(seconds=30)
@@ -102,7 +139,7 @@ class RoutingAndSlaTests(TestCase):
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESOLUTION_BREACHED).count(), 1)
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.ESCALATION).count(), 1)
         self.assertEqual(self.issue.current_escalation_level, 1)
-        self.assertEqual(Notification.objects.filter(issue=self.issue).count(), 3)
+        self.assertEqual(Notification.objects.filter(issue=self.issue).values("notification_type").distinct().count(), 3)
         self.assertGreaterEqual(AuditEntry.objects.filter(action__startswith="sla.").count(), 3)
 
     def test_approaching_deadlines_warn_once_each(self):
@@ -115,7 +152,7 @@ class RoutingAndSlaTests(TestCase):
         process_sla_sweep()
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESPONSE_WARNING).count(), 1)
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESOLUTION_WARNING).count(), 1)
-        self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type__contains="APPROACHING").count(), 2)
+        self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type__contains="APPROACHING").values("notification_type").distinct().count(), 2)
 
     def test_late_response_and_resolution_are_recorded_during_transitions(self):
         policy = SlaPolicy.objects.create(name="Transition test", response_time_seconds=60, resolution_time_seconds=120)
@@ -177,7 +214,7 @@ class RoutingAndSlaTests(TestCase):
         self.assertIsNotNone(self.issue.resolution_breached_at)
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESPONSE_BREACHED).count(), 0)
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESOLUTION_BREACHED).count(), 1)
-        self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type="RESOLUTION_SLA_BREACHED").count(), 1)
+        self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type="RESOLUTION_SLA_BREACHED").values("recipient").distinct().count(), 2)
 
     def test_reopen_preserves_existing_breaches_escalation_and_history(self):
         now = timezone.now()
@@ -207,7 +244,7 @@ class RoutingAndSlaTests(TestCase):
         self.assertEqual(self.issue.next_escalation_at, now + timedelta(hours=1))
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESPONSE_BREACHED).count(), 1)
         self.assertEqual(self.issue.sla_events.filter(event_type=SlaEvent.Type.RESOLUTION_BREACHED).count(), 1)
-        self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type__in=["RESPONSE_SLA_BREACHED", "RESOLUTION_SLA_BREACHED"]).count(), 2)
+        self.assertEqual(Notification.objects.filter(issue=self.issue, notification_type__in=["RESPONSE_SLA_BREACHED", "RESOLUTION_SLA_BREACHED"]).values("notification_type").distinct().count(), 2)
 
     def test_operational_dashboard_counts_persisted_records(self):
         policy = SlaPolicy.objects.create(name="Dashboard", response_time_seconds=300, resolution_time_seconds=1200)
@@ -230,17 +267,17 @@ class RoutingAndSlaTests(TestCase):
         self.assertEqual(client.post("/api/admin/routing-rules/", {"name": "x", "target_team": self.team.pk}, format="json").status_code, 403)
         self.assertEqual(client.post("/api/admin/sla-policies/", {"name": "x", "response_time_seconds": 20, "resolution_time_seconds": 30}, format="json").status_code, 403)
         self.assertEqual(client.post(f"/api/issues/{self.issue.pk}/assign/", {"team": self.team.pk, "reason": "route correction"}, format="json").status_code, 403)
-        for role in (UserRole.FACILITY_MANAGER, UserRole.IT_MANAGER, UserRole.DEPARTMENT_HEAD):
-            manager = User.objects.create_user(f"{role.lower()}@tests.test", role.label, "test-password", role=role)
-            client.force_authenticate(manager)
-            denied = client.post(f"/api/issues/{self.issue.pk}/assign/", {"team": self.team.pk, "reason": "not permitted"}, format="json")
-            self.assertEqual(denied.status_code, 403, denied.data)
+        client.force_authenticate(self.student)
+        denied = client.post(f"/api/issues/{self.issue.pk}/assign/", {"team": self.team.pk, "reason": "not permitted"}, format="json")
+        self.assertEqual(denied.status_code, 403, denied.data)
+        technician = User.objects.create_user("technician@tests.test", "Technician", "test-password", role=UserRole.TECHNICAL_STAFF)
+        self.team.members.add(technician)
         client.force_authenticate(self.supervisor)
-        outside_team = Team.objects.create(name="Outside supervisor scope")
-        denied = client.post(f"/api/issues/{self.issue.pk}/assign/", {"team": outside_team.pk, "reason": "must be denied"}, format="json")
-        self.assertEqual(denied.status_code, 403)
-        response = client.post(f"/api/issues/{self.issue.pk}/assign/", {"team": self.team.pk, "reason": "team scope"}, format="json")
+        outside_team = Team.objects.create(name="Other team")
+        denied = client.post(f"/api/issues/{self.issue.pk}/assign/", {"team": outside_team.pk, "user": technician.pk, "reason": "invalid team membership"}, format="json")
+        self.assertEqual(denied.status_code, 400)
+        response = client.post(f"/api/issues/{self.issue.pk}/assign/", {"team": self.team.pk, "user": technician.pk, "reason": "admin assignment"}, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         client.force_authenticate(self.admin)
-        response = client.post("/api/admin/sla-policies/", {"name": "Default policy", "response_time_seconds": 300, "resolution_time_seconds": 1800, "warning_before_seconds": 30, "escalation_levels": [{"level": 1, "after_breach_seconds": 0, "recipient_role": "SUPERVISOR"}]}, format="json")
+        response = client.post("/api/admin/sla-policies/", {"name": "Default policy", "response_time_seconds": 300, "resolution_time_seconds": 1800, "warning_before_seconds": 30, "escalation_levels": [{"level": 1, "after_breach_seconds": 0, "recipient_role": "ADMIN"}]}, format="json")
         self.assertEqual(response.status_code, 201, response.data)

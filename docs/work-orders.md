@@ -10,13 +10,13 @@ ASSIGNED → ACCEPTED → IN_PROGRESS → COMPLETED → VERIFIED → CLOSED
 ASSIGNED / ACCEPTED / REWORK → CANCELLED
 ```
 
-Only the assigned active technician can accept, start, record field notes/materials/evidence, and complete their work order. Completion requires a resolution summary of at least 20 characters. Completion submits the task for review; it does not resolve the issue. A supervisor in the work-order team or an authorized manager can verify or request rework. When a supervisor verifies a work order whose issue is `IN_PROGRESS`, the existing issue transition service moves the issue to `RESOLVED` and records the existing issue history/SLA resolution event. Issue closure remains a distinct operation. Reassignment is allowed only before field work starts; moving an accepted/rework task back to assigned clears acceptance state.
+Only the assigned active technical staff member can accept, start, record field notes/materials/evidence, and complete their work order. Completion requires a resolution summary of at least 20 characters. Completion submits the task for review; it does not resolve the issue. Admin can verify or request rework across teams. When Admin verifies a work order whose issue is `IN_PROGRESS`, the existing issue transition service moves the issue to `RESOLVED` and records the existing issue history/SLA resolution event. Issue closure remains a distinct operation. Reassignment is allowed only before field work starts; moving an accepted/rework task back to assigned clears acceptance state.
 
-Technicians may move their assigned issue to `IN_PROGRESS`, but cannot directly resolve, close, or reopen it through the issue status API. Work-order completion must pass through supervisor/manager verification before it resolves the issue. Work orders remain optional: authorized managers and team supervisors can still resolve issues without a work order where the workflow permits.
+Technical staff may move their assigned issue to `IN_PROGRESS`, but cannot directly resolve, close, or reopen it through the issue status API. Work-order completion must pass through Admin verification before it resolves the issue. Work orders remain optional: Admin can still resolve issues without a work order where the workflow permits.
 
-The technician dashboard surfaces assigned work orders, while the supervisor dashboard surfaces tasks awaiting verification. The work-order detail view displays the persisted lifecycle state; these views do not create or advance work automatically.
+The technical staff dashboard surfaces assigned work orders, while the Admin dashboard surfaces tasks awaiting verification. The work-order detail view displays the persisted lifecycle state; these views do not create or advance work automatically.
 
-All transitions and permissions are checked in domain services under database transactions and row locks. Team membership, active team/user state, technician role, and visibility are validated by the backend. A supervisor cannot create or assign work outside their team scope. Managers and administrators use the same technician/team validation but may operate across teams.
+All transitions and permissions are checked in domain services under database transactions and row locks. Team membership, active team/user state, technical staff role, and visibility are validated by the backend. Admin may operate across teams but must use an eligible technician/team pairing.
 
 ## Records and history
 
@@ -36,17 +36,17 @@ All paths require an authenticated session and CSRF token for writes.
 | GET | `/api/work-orders/:id/` | Read task, issue SLA deadline, assignment, notes, materials, evidence, and history |
 | GET | `/api/work-orders/summary/` | Scoped persisted counts by operational state |
 | GET / POST | `/api/issues/:id/work-orders/` | List visible issue work orders or create one for an authorized team |
-| GET | `/api/work-order-technicians/?team=:id` | Get active technicians eligible for a team (operational managers only) |
+| GET | `/api/work-order-technicians/?team=:id` | Get active technical staff eligible for a team (Admin only) |
 | POST | `/api/work-orders/:id/assign/` | Assign/reassign a technician with a reason |
 | POST | `/api/work-orders/:id/accept/`, `/start/` | Technician acceptance and work start |
 | POST | `/api/work-orders/:id/notes/`, `/materials/`, `/evidence/` | Append field notes, materials, and private image evidence |
 | POST | `/api/work-orders/:id/complete/` | Submit resolution summary for review |
-| POST | `/api/work-orders/:id/verify/`, `/rework/` | Supervisor/manager verification or rework request |
+| POST | `/api/work-orders/:id/verify/`, `/rework/` | Admin verification or rework request |
 | POST | `/api/work-orders/:id/cancel/`, `/close/` | Cancel eligible unstarted work or close verified work |
 
 ## UI and role access
 
-Technicians and operational supervisors/managers see Work orders in navigation. Students and staff do not. Work orders can be created from an authorized issue detail page; the queue and detail pages support filtering, assignment, technician field actions, private evidence preview, review, rework, and closure. Role gates improve navigation usability but do not replace API authorization.
+Technical staff and Admin see Work orders in navigation. Students and staff do not. Work orders can be created from an authorized issue detail page; the queue and detail pages support filtering, assignment, technician field actions, private evidence preview, review, rework, and closure. Role gates improve navigation usability but do not replace API authorization.
 
 Tests run with the project test settings:
 
