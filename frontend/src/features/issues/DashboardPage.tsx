@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom'
+import { ArrowRight, BadgeCheck, CircleAlert, ClipboardList, Clock3, Signal } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { apiRequest } from '../../lib/api'
-import type { IssueRecord, Paginated, AuthUser, WorkOrderRecord } from '../../types/api'
+import type { IssueRecord, Paginated, AuthUser, WorkOrderRecord, NetworkAnalyticsSummary } from '../../types/api'
 import type { WorkOrderSummary } from '../workorders/WorkOrderPages'
 import { Badge, EmptyState, ErrorState, Loading } from '../../components/ui'
 
@@ -13,7 +15,7 @@ const studentRoles = new Set<AuthUser['role']>(['STUDENT', 'STAFF'])
 
 function workspaceFor(role: AuthUser['role']) {
   switch (role) {
-    case 'STUDENT': return { eyebrow: 'STUDENT SERVICES', title: 'Your campus requests', detail: 'Report an issue and follow its progress from one place.', queue: 'Recent requests' }
+    case 'STUDENT': return { eyebrow: 'STUDENT SERVICES', title: 'Student Service Desk', detail: 'Report a campus issue and follow its progress from one place.', queue: 'Recent requests' }
     case 'STAFF': return { eyebrow: 'STAFF SERVICES', title: 'Your service requests', detail: 'Track reports you have submitted and raise a new campus request.', queue: 'Recent requests' }
     case 'TECHNICAL_STAFF': return { eyebrow: 'FIELD OPERATIONS', title: 'Technical staff workspace', detail: 'Review assigned field tasks, record progress, and submit completed work for verification.', queue: 'Assigned issues' }
     default: return { eyebrow: 'CAMPUS OPERATIONS', title: 'Campus administration', detail: 'Review campus service issues, assignment coverage, priorities and SLA attention.', queue: 'Campus issue register' }
@@ -23,6 +25,7 @@ function workspaceFor(role: AuthUser['role']) {
 export default function DashboardPage({ user }: { user: AuthUser }) {
   const workspace = workspaceFor(user.role)
   const isOperational = operationalRoles.has(user.role)
+  const hasNetworkAccess = user.role === 'ADMIN' || (user.role === 'TECHNICAL_STAFF' && ['network', 'it support'].includes(user.technical_specialization.trim().toLowerCase()))
   const dashboard = useQuery({
     queryFn: async (): Promise<DashboardData> => {
       const [all, open, resolved] = await Promise.all([
@@ -35,6 +38,12 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
     },
     queryKey: ['dashboard-issues', user.role],
   })
+  const networkQuality = useQuery({
+    queryKey: ['dashboard-network-quality'],
+    queryFn: () => apiRequest<NetworkAnalyticsSummary>('/network-analytics/summary/'),
+    enabled: hasNetworkAccess,
+    staleTime: 60_000,
+  })
   const workOrderSummary = useQuery({ queryKey: ['work-order-summary'], queryFn: () => apiRequest<WorkOrderSummary>('/work-orders/summary/'), enabled: isOperational })
   const workOrderQueue = useQuery({
     queryKey: ['dashboard-work-orders', user.role],
@@ -45,7 +54,7 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
   return <div className="workspace-dashboard">
     <section className="workspace-intro">
       <div><p className="eyebrow">{workspace.eyebrow}</p><h2>{workspace.title}</h2><p>{workspace.detail}</p></div>
-      <Link className="button button--primary" to={studentRoles.has(user.role) ? '/issues/new' : '/issues'}>{studentRoles.has(user.role) ? '＋ Report an issue' : 'Open issue register'}</Link>
+      <Link className="button button--primary" to={studentRoles.has(user.role) ? '/issues/new' : '/issues'}>{studentRoles.has(user.role) ? '+ Report New Issue' : 'Open issue register'}</Link>
     </section>
 
     {dashboard.isPending ? <div className="state-panel"><Loading label="Loading your workspace" /></div>
@@ -53,20 +62,21 @@ export default function DashboardPage({ user }: { user: AuthUser }) {
         : <>
           <section className={`metric-grid workspace-metrics ${isOperational ? '' : 'workspace-metrics--reporter'}`} aria-label="Issue summary">
             {dashboard.data.summary ? <>
-              <Metric label="Open" value={dashboard.data.summary.open} />
-              <Metric label="Assigned" value={dashboard.data.summary.assigned} />
-              <Metric label="Unassigned" value={dashboard.data.summary.unassigned} />
-              <Metric label="SLA at risk" value={dashboard.data.summary.at_risk} tone="warning" />
-              <Metric label="SLA breached" value={dashboard.data.summary.breached} tone="danger" />
+              <Metric label="Open" value={dashboard.data.summary.open} detail="Active issue records" icon={CircleAlert} />
+              <Metric label="Assigned" value={dashboard.data.summary.assigned} detail="With a responsible team member" icon={BadgeCheck} />
+              <Metric label="Unassigned" value={dashboard.data.summary.unassigned} detail="Needs an assignment" icon={CircleAlert} />
+              <Metric label="SLA at risk" value={dashboard.data.summary.at_risk} detail="Approaching a stored deadline" tone="warning" icon={Clock3} />
+              <Metric label="SLA breached" value={dashboard.data.summary.breached} detail="Recorded breach events" tone="danger" icon={Clock3} />
             </> : <>
-              <Metric label="Requests submitted" value={dashboard.data.all.count} />
-              <Metric label="Open requests" value={dashboard.data.open.count} />
-              <Metric label="Resolved requests" value={dashboard.data.resolved.count} tone="positive" />
+              <Metric label="Total submitted" value={dashboard.data.all.count} detail="All time campus tickets" icon={ClipboardList} />
+              <Metric label="Open requests" value={dashboard.data.open.count} detail="Currently in Open status" icon={CircleAlert} />
+              <Metric label="Resolved requests" value={dashboard.data.resolved.count} detail="Marked resolved" tone="positive" icon={BadgeCheck} />
             </>}
+            {hasNetworkAccess && <NetworkQualityMetric query={networkQuality} />}
           </section>
 
           <section className="queue-section" aria-labelledby="queue-title">
-            <div className="queue-heading"><div><p className="eyebrow">CURRENT RECORDS</p><h2 id="queue-title">{workspace.queue}</h2><p>Based on issues visible to your account.</p></div><Link className="text-link" to="/issues">View issue register <span aria-hidden="true">→</span></Link></div>
+            <div className="queue-heading"><div><p className="eyebrow">CURRENT RECORDS</p><h2 id="queue-title">{workspace.queue}</h2><p>Based on issues visible to your account.</p></div><Link className="text-link" to="/issues">View issue register <ArrowRight size={15} aria-hidden="true" /></Link></div>
             {dashboard.data.all.results.length === 0 ? <div className="queue-empty"><EmptyState title={studentRoles.has(user.role) ? 'No requests yet' : 'No visible issues'} detail={studentRoles.has(user.role) ? 'When you submit a campus request, its status and updates will appear here.' : 'There are no issues in your current visibility scope.'} />{studentRoles.has(user.role) && <Link className="button button--primary" to="/issues/new">Report your first issue</Link>}</div>
               : <div className="table-scroll"><table className="issue-table workspace-table"><thead><tr><th scope="col">Ticket</th><th scope="col">Issue</th><th scope="col">Category</th><th scope="col">Location</th>{isOperational && <><th scope="col">Priority</th><th scope="col">Team</th></>}<th scope="col">Status</th><th scope="col">Updated</th></tr></thead><tbody>
                 {dashboard.data.all.results.slice(0, 8).map((issue) => <tr key={issue.id}>
@@ -98,6 +108,12 @@ function WorkOrderQueue({ role, query }: { role: AuthUser['role']; query: UseQue
   </section>
 }
 
-function Metric({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'positive' | 'warning' | 'danger' }) {
-  return <article className={`workspace-metric workspace-metric--${tone}`}><div>{label}</div><strong>{value.toLocaleString()}</strong></article>
+function Metric({ label, value, detail = '', tone = 'default', icon: Icon = BadgeCheck }: { label: string; value: number; detail?: string; tone?: 'default' | 'positive' | 'warning' | 'danger'; icon?: LucideIcon }) {
+  return <article className={`workspace-metric workspace-metric--${tone}`}><div className="workspace-metric-heading"><span>{label}</span><Icon size={16} aria-hidden="true" /></div><strong>{value.toLocaleString()}</strong><small>{detail}</small></article>
+}
+
+function NetworkQualityMetric({ query }: { query: UseQueryResult<NetworkAnalyticsSummary, Error> }) {
+  if (query.isPending) return <article className="workspace-metric workspace-metric--network" aria-busy="true"><div className="workspace-metric-heading"><span>Active Network Quality</span><Signal size={16} aria-hidden="true" /></div><strong>Loading</strong><small>Reading measured campus data…</small></article>
+  if (query.isError) return <article className="workspace-metric workspace-metric--network"><div className="workspace-metric-heading"><span>Active Network Quality</span><Signal size={16} aria-hidden="true" /></div><strong>Unavailable</strong><button className="metric-retry" type="button" onClick={() => { void query.refetch() }}>Retry network summary</button></article>
+  return <article className="workspace-metric workspace-metric--network"><div className="workspace-metric-heading"><span>Active Network Quality</span><Signal size={16} aria-hidden="true" /></div><strong>{query.data.overall_quality.replace(/_/g, ' ')}</strong><small>{query.data.total_measurements.toLocaleString()} measurements in the current window</small><Link className="metric-inline-link" to="/network-quality">View network analysis <ArrowRight size={13} aria-hidden="true" /></Link></article>
 }

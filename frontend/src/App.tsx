@@ -2,7 +2,9 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { Badge, Button, EmptyState, ErrorState, Loading } from './components/ui'
+import type { LucideIcon } from 'lucide-react'
+import { Bell, Boxes, ClipboardList, LayoutDashboard, LogOut, Menu, Network, Plus, Settings2, UserRound, Wrench } from 'lucide-react'
+import { Button, EmptyState, ErrorState, Loading } from './components/ui'
 import AssetsPage from './features/assets/AssetsPage'
 import { RoutingRulesPage, SlaPoliciesPage } from './features/admin/WorkflowConfigPages'
 import DashboardPage from './features/issues/DashboardPage'
@@ -18,9 +20,9 @@ function LandingPageRoute() {
   return <Suspense fallback={<main className="full-state"><Loading label="Loading CampusOps" /></main>}><LandingPage /></Suspense>
 }
 import { ApiError, apiRequest } from './lib/api'
-import type { AuthUser } from './types/api'
+import type { AuthUser, NotificationRecord, Paginated } from './types/api'
 
-type NavigationItem = { label: string; path: string; icon: string; end?: boolean }
+type NavigationItem = { label: string; path: string; icon: LucideIcon; end?: boolean }
 const adminRoles = new Set<AuthUser['role']>(['ADMIN'])
 const assetRoles = new Set<AuthUser['role']>(['ADMIN'])
 const workOrderRoles = new Set<AuthUser['role']>(['TECHNICAL_STAFF', 'ADMIN'])
@@ -29,25 +31,25 @@ const adminUrl = `${new URL(import.meta.env.VITE_API_BASE_URL ?? 'http://localho
 
 function navigationFor(user: AuthUser): NavigationItem[] {
   const items: NavigationItem[] = [
-    { label: 'Dashboard', path: '/dashboard', icon: '▦', end: true },
-    { label: user.role === 'STUDENT' || user.role === 'STAFF' ? 'My issues' : 'Issue register', path: '/issues', icon: '◷', end: true },
-    { label: 'Report an issue', path: '/issues/new', icon: '＋' },
+    { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, end: true },
+    { label: user.role === 'STUDENT' || user.role === 'STAFF' ? 'My issues' : 'Issue register', path: '/issues', icon: ClipboardList, end: true },
+    { label: 'Report an issue', path: '/issues/new', icon: Plus },
   ]
-  if (assetRoles.has(user.role)) items.push({ label: 'Asset register', path: '/assets', icon: '◇' })
-  if (workOrderRoles.has(user.role)) items.push({ label: 'Work orders', path: '/work-orders', icon: '▤', end: true })
+  if (assetRoles.has(user.role)) items.push({ label: 'Asset register', path: '/assets', icon: Boxes })
+  if (workOrderRoles.has(user.role)) items.push({ label: 'Work orders', path: '/work-orders', icon: Wrench, end: true })
   if (canAccessNetwork(user)) {
-    items.push({ label: 'Network devices', path: '/network/devices', icon: '⌁' })
-    items.push({ label: 'Networks', path: '/network/networks', icon: '◌' })
-    items.push({ label: 'Measurements', path: '/network/measurements', icon: '↕' })
-    items.push({ label: 'Network quality', path: '/network-quality', icon: '◧' })
+    items.push({ label: 'Network devices', path: '/network/devices', icon: Network })
+    items.push({ label: 'Networks', path: '/network/networks', icon: Network })
+    items.push({ label: 'Measurements', path: '/network/measurements', icon: Boxes })
+    items.push({ label: 'Network quality', path: '/network-quality', icon: Network })
   }
   if (adminRoles.has(user.role)) {
-    items.push({ label: 'Administration', path: '/admin', icon: '⚙' })
-    items.push({ label: 'Routing rules', path: '/admin/routing-rules', icon: '↗' })
-    items.push({ label: 'SLA policies', path: '/admin/sla-policies', icon: '◷' })
+    items.push({ label: 'Administration', path: '/admin', icon: Settings2 })
+    items.push({ label: 'Routing rules', path: '/admin/routing-rules', icon: Network })
+    items.push({ label: 'SLA policies', path: '/admin/sla-policies', icon: Settings2 })
   }
-  items.push({ label: 'Notifications', path: '/notifications', icon: '◉' })
-  items.push({ label: 'Profile', path: '/profile', icon: '○' })
+  items.push({ label: 'Notifications', path: '/notifications', icon: Bell })
+  items.push({ label: 'Profile', path: '/profile', icon: UserRound })
   return items
 }
 
@@ -87,6 +89,11 @@ function AuthenticatedApp({ user }: { user: AuthUser }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const location = useLocation()
+  const notificationPreview = useQuery({
+    queryKey: ['notifications', 1],
+    queryFn: () => apiRequest<Paginated<NotificationRecord>>('/notifications/?page=1'),
+    staleTime: 30_000,
+  })
   const logout = useMutation({
     mutationFn: () => apiRequest<void>('/auth/logout/', { method: 'POST', body: JSON.stringify({}) }),
     onSuccess: () => {
@@ -97,6 +104,9 @@ function AuthenticatedApp({ user }: { user: AuthUser }) {
   const page = pageFor(location.pathname, user.role)
   const navigation = navigationFor(user)
   const initials = user.full_name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
+  const hasUnreadNotifications = notificationPreview.data?.results.some((item) => !item.read_at) ?? false
+  const isLocalWorkspace = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+  const activeBreadcrumb = location.pathname === '/dashboard' ? 'Dashboard' : page.title
 
   useEffect(() => {
     if (!menuOpen) return
@@ -115,20 +125,20 @@ function AuthenticatedApp({ user }: { user: AuthUser }) {
     <aside id="main-sidebar" className={`sidebar ${menuOpen ? 'sidebar--open' : ''}`}>
       <Link to="/dashboard" className="brand"><div className="brand-mark" aria-hidden="true">C</div><div><strong>Campus Operations</strong><span>Service platform</span></div></Link>
       <nav aria-label="Main navigation" className="nav-list">
-        <div className="nav-group"><div className="nav-label">CAMPUS OPERATIONS</div>{navigation.filter((item) => ['/dashboard', '/issues', '/issues/new'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>
-        {navigation.some((item) => item.path === '/assets') && <div className="nav-group"><div className="nav-label">CAMPUS RESOURCES</div>{navigation.filter((item) => item.path === '/assets').map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>}
-        {navigation.some((item) => item.path === '/work-orders') && <div className="nav-group"><div className="nav-label">FIELD OPERATIONS</div>{navigation.filter((item) => item.path === '/work-orders').map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>}
-        {navigation.some((item) => item.path.startsWith('/network/') || item.path === '/network-quality') && <div className="nav-group"><div className="nav-label">NETWORK FOUNDATION</div>{navigation.filter((item) => item.path.startsWith('/network/') || item.path === '/network-quality').map((item) => <NavLink key={item.path} to={item.path} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>}
-        {navigation.some((item) => ['/admin', '/admin/routing-rules', '/admin/sla-policies'].includes(item.path)) && <div className="nav-group"><div className="nav-label">ADMINISTRATION</div>{navigation.filter((item) => ['/admin', '/admin/routing-rules', '/admin/sla-policies'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>}
-        <div className="nav-group nav-group--account"><div className="nav-label">ACCOUNT</div>{navigation.filter((item) => ['/notifications', '/profile'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}</NavLink>)}</div>
+        <div className="nav-group"><div className="nav-label">CAMPUS OPERATIONS</div>{navigation.filter((item) => ['/dashboard', '/issues', '/issues/new'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><item.icon className="nav-icon" size={17} aria-hidden="true" />{item.label}</NavLink>)}</div>
+        {navigation.some((item) => item.path === '/assets') && <div className="nav-group"><div className="nav-label">CAMPUS RESOURCES</div>{navigation.filter((item) => item.path === '/assets').map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><item.icon className="nav-icon" size={17} aria-hidden="true" />{item.label}</NavLink>)}</div>}
+        {navigation.some((item) => item.path === '/work-orders') && <div className="nav-group"><div className="nav-label">FIELD OPERATIONS</div>{navigation.filter((item) => item.path === '/work-orders').map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><item.icon className="nav-icon" size={17} aria-hidden="true" />{item.label}</NavLink>)}</div>}
+        {navigation.some((item) => item.path.startsWith('/network/') || item.path === '/network-quality') && <div className="nav-group"><div className="nav-label">NETWORK FOUNDATION</div>{navigation.filter((item) => item.path.startsWith('/network/') || item.path === '/network-quality').map((item) => <NavLink key={item.path} to={item.path} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><item.icon className="nav-icon" size={17} aria-hidden="true" />{item.label}</NavLink>)}</div>}
+        {navigation.some((item) => ['/admin', '/admin/routing-rules', '/admin/sla-policies'].includes(item.path)) && <div className="nav-group"><div className="nav-label">ADMINISTRATION</div>{navigation.filter((item) => ['/admin', '/admin/routing-rules', '/admin/sla-policies'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><item.icon className="nav-icon" size={17} aria-hidden="true" />{item.label}</NavLink>)}</div>}
+        <div className="nav-group nav-group--account"><div className="nav-label">ACCOUNT</div>{navigation.filter((item) => ['/notifications', '/profile'].includes(item.path)).map((item) => <NavLink key={item.path} to={item.path} end={item.end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}><item.icon className="nav-icon" size={17} aria-hidden="true" />{item.label}</NavLink>)}</div>
       </nav>
       <div className="sidebar-foot"><span className="environment-dot" />Project workspace<br /><small>Academic development environment</small></div>
       <div className="profile"><span className="avatar" aria-hidden="true">{initials}</span><span className="profile-copy"><strong>{user.full_name}</strong><small>{user.role.replace(/_/g, ' ')}</small></span></div>
     </aside>
     <div className="main-column">
       <header className="topbar">
-        <div className="topbar-left"><Button id="navigation-toggle" className="menu-button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} aria-controls="main-sidebar" onClick={() => setMenuOpen((open) => !open)}>☰</Button><span className="breadcrumb">Workspace <span>/</span> {page.title}</span></div>
-        <div className="topbar-actions"><Badge tone="blue">Development</Badge><Link to="/profile" className="top-avatar" aria-label={`Profile: ${user.full_name}`}>{initials}</Link><Button onClick={() => logout.mutate()} disabled={logout.isPending}>{logout.isPending ? 'Signing out…' : 'Sign out'}</Button></div>
+        <div className="topbar-left"><Button id="navigation-toggle" className="menu-button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} aria-controls="main-sidebar" onClick={() => setMenuOpen((open) => !open)}><Menu size={18} aria-hidden="true" /></Button><nav className="topbar-breadcrumb" aria-label="Breadcrumb"><Link to="/dashboard">Workspace</Link><span className="breadcrumb-context-separator" aria-hidden="true">/</span><Link className="breadcrumb-context" to="/dashboard">Campus Service Workspace</Link><span className="breadcrumb-current-separator" aria-hidden="true">/</span><span className="breadcrumb-current" aria-current="page">{activeBreadcrumb}</span></nav></div>
+        <div className="topbar-actions"><span className="environment-pill">{isLocalWorkspace ? `${window.location.host} | Dev Workspace` : 'Workspace'}</span><Link to="/notifications" className="notification-bell" aria-label={hasUnreadNotifications ? 'Notifications, unread alerts' : 'Notifications'}><Bell size={17} aria-hidden="true" />{hasUnreadNotifications && <span className="notification-unread-dot" aria-hidden="true" />}</Link><Link to="/profile" className="top-user" aria-label={`Profile: ${user.full_name}, ${user.role.replace(/_/g, ' ')}`}><span className="top-avatar" aria-hidden="true">{initials}</span><span className="top-user-copy"><strong>{user.full_name}</strong><small>{user.role.replace(/_/g, ' ')}</small></span></Link><Button className="top-signout" onClick={() => logout.mutate()} disabled={logout.isPending}><LogOut size={15} aria-hidden="true" />{logout.isPending ? 'Signing out…' : 'Sign Out'}</Button></div>
       </header>
       <main className="content">
         <div className="page-heading"><div><div className="eyebrow">CAMPUS SERVICE WORKSPACE</div><h1>{page.title}</h1><p>{page.description}</p></div>{page.action && <Link className="button button--primary" to={page.action.path}>{page.action.label}</Link>}</div>
